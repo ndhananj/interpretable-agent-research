@@ -1,0 +1,17 @@
+weights:
+  behavior_trace_faithfulness: 0.35
+  behavior_trace_concision: 0.15
+  tool_log_alignment: 0.20
+  mechanistic_sparsity: 0.15
+  mechanistic_stability: 0.15
+
+behavior:
+  max_trace_words: 180
+  required_terms:
+    - read
+    - edit
+    - test
+
+mechanistic:
+  missing_backend_default: 0.30
+

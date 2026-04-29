@@ -1,0 +1,9 @@
+accelerate
+datasets
+peft
+psutil
+pyyaml
+torch
+transformers
+trl
+
