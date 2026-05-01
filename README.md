@@ -49,10 +49,18 @@ backend exposes activations.
 
 ```bash
 python run_experiment.py --config configs/default.yaml
+python csi.py start
+python csi.py status
+python csi.py dashboard
+python csi.py stop
 python agent_harness/run_task.py --task tasks/replace_token.yaml --config configs/default.yaml
 python score_candidate.py --run runs/<run-id>
 python train_adapter.py --config configs/adapter.yaml
 ```
+
+The `csi.py` commands run the experiment loop continuously in a local
+background process and write control state to `runs/csi/`. The dashboard serves
+a standard-library localhost view at `http://127.0.0.1:8765`.
 
 ## Layout
 
