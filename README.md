@@ -11,6 +11,8 @@ explainability metrics.
 
 ## Quick Start
 
+### Mock CPU-safe run
+
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
@@ -21,6 +23,43 @@ python run_experiment.py --config configs/default.yaml --max-trials 1
 The default configuration uses a deterministic mock model, so it runs without
 network access or GPU access. Adapter training and vLLM acceleration are
 optional paths enabled by configuration and local hardware availability.
+
+### Train a LoRA adapter
+
+`configs/adapter.yaml` defaults to `Qwen/Qwen2.5-Coder-1.5B-Instruct`, reads
+JSONL examples from `data/adapter_examples.jsonl`, and writes the PEFT adapter
+artifact to `adapters/latest`.
+
+```bash
+python train_adapter.py --config configs/adapter.yaml --dry-run
+python train_adapter.py --config configs/adapter.yaml
+```
+
+Each JSONL row must contain `prompt` or `instruction`, plus `response` or
+`completion`. The dry run validates the config and dataset without loading model
+weights.
+
+### Serve through local vLLM
+
+Install vLLM separately because it is CUDA and platform sensitive:
+
+```bash
+pip install -r requirements-vllm.txt
+vllm serve Qwen/Qwen2.5-Coder-1.5B-Instruct \
+  --enable-lora \
+  --lora-modules interpretable-agent-lora=adapters/latest \
+  --host 127.0.0.1 \
+  --port 8000
+```
+
+In another shell, point the harness at the OpenAI-compatible localhost server:
+
+```bash
+python agent_harness/run_task.py \
+  --task tasks/replace_token.yaml \
+  --config configs/vllm.yaml \
+  --run-dir runs/vllm-task
+```
 
 ## Hardware Policy
 
@@ -55,6 +94,7 @@ python csi.py dashboard
 python csi.py stop
 python agent_harness/run_task.py --task tasks/replace_token.yaml --config configs/default.yaml
 python score_candidate.py --run runs/<run-id>
+python train_adapter.py --config configs/adapter.yaml --dry-run
 python train_adapter.py --config configs/adapter.yaml
 ```
 

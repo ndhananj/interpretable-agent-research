@@ -1,0 +1,29 @@
+experiment:
+  trials: 3
+  run_root: runs
+  baseline_functionality: null
+  functionality_floor_ratio: 0.90
+  candidate_seed: 7
+
+model:
+  backend: vllm_openai
+  name: Qwen/Qwen2.5-Coder-1.5B-Instruct
+  adapter_name: interpretable-agent-lora
+  adapter_path: adapters/latest
+  base_url: http://127.0.0.1:8000
+  timeout_s: 30
+  temperature: 0.0
+  max_tokens: 1024
+
+resources:
+  conservative: true
+  max_cpu_threads: 4
+  max_load_ratio: 0.75
+  min_available_memory_gib: 8
+  task_timeout_s: 45
+  experiment_timeout_s: 240
+
+scoring:
+  metrics_config: configs/metrics.yaml
+  task_paths:
+    - tasks/replace_token.yaml
