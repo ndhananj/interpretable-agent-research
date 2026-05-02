@@ -16,9 +16,11 @@ class _Handler(BaseHTTPRequestHandler):
         "edits": {"input.txt": "DONE\n"},
         "commands": [["python3", "-c", "print('ok')"]],
     }
+    request_payload = {}
 
     def do_POST(self) -> None:  # noqa: N802
-        _ = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        self.__class__.request_payload = json.loads(body)
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -57,6 +59,7 @@ def test_vllm_response_becomes_agent_action(fake_server: str, tmp_path: Path) ->
 
     action = backend.propose_actions("replace token", tmp_path)
 
+    assert _Handler.request_payload["model"] == "adapter"
     assert action.decision_trace == "edit the file"
     assert action.edits == {"input.txt": "DONE\n"}
     assert action.commands == [["python3", "-c", "print('ok')"]]
@@ -83,3 +86,8 @@ def test_vllm_invalid_model_json_is_rejected(fake_server: str, tmp_path: Path) -
 def test_make_backend_creates_vllm_without_network_call() -> None:
     backend = make_backend({"backend": "vllm_openai", "base_url": "http://127.0.0.1:8000"})
     assert isinstance(backend, VLLMOpenAIBackend)
+
+
+def test_make_backend_requires_adapter_path_with_adapter_name() -> None:
+    with pytest.raises(ValueError, match="adapter_path"):
+        make_backend({"backend": "vllm_openai", "adapter_name": "adapter"})

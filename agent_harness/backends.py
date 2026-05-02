@@ -149,10 +149,20 @@ def make_backend(config: dict) -> ModelBackend:
     if backend == "mock":
         return MockBackend()
     if backend == "vllm_openai":
+        adapter_name = config.get("adapter_name")
+        adapter_path = config.get("adapter_path")
+        if adapter_name is not None and (not isinstance(adapter_name, str) or not adapter_name.strip()):
+            raise ValueError("model.adapter_name must be a non-empty string when provided")
+        if adapter_name is not None and (not isinstance(adapter_path, str) or not adapter_path.strip()):
+            raise ValueError(
+                "model.adapter_path must be a non-empty string when model.adapter_name is configured"
+            )
+        if adapter_path is not None and (not isinstance(adapter_path, str) or not adapter_path.strip()):
+            raise ValueError("model.adapter_path must be a non-empty string when provided")
         return VLLMOpenAIBackend(
             base_url=str(config.get("base_url", "http://127.0.0.1:8000")),
             model_name=str(config.get("name", "Qwen/Qwen2.5-Coder-1.5B-Instruct")),
-            adapter_name=config.get("adapter_name"),
+            adapter_name=adapter_name,
             timeout_s=float(config.get("timeout_s", 30)),
             temperature=float(config.get("temperature", 0.0)),
             max_tokens=int(config.get("max_tokens", 1024)),

@@ -45,11 +45,8 @@ Install vLLM separately because it is CUDA and platform sensitive:
 
 ```bash
 pip install -r requirements-vllm.txt
-vllm serve Qwen/Qwen2.5-Coder-1.5B-Instruct \
-  --enable-lora \
-  --lora-modules interpretable-agent-lora=adapters/latest \
-  --host 127.0.0.1 \
-  --port 8000
+python serve_vllm_adapter.py --config configs/vllm.yaml --dry-run
+python serve_vllm_adapter.py --config configs/vllm.yaml
 ```
 
 In another shell, point the harness at the OpenAI-compatible localhost server:
@@ -60,6 +57,78 @@ python agent_harness/run_task.py \
   --config configs/vllm.yaml \
   --run-dir runs/vllm-task
 ```
+
+## Continuous agent with adapted vLLM model
+
+This path runs CSI against the LoRA adapter produced by `train_adapter.py`.
+`configs/vllm.yaml` keeps the base model in `model.name`, serves the adapter
+from `model.adapter_path`, and sends `model.adapter_name` as the OpenAI model
+name because vLLM exposes LoRA modules by that name.
+
+1. Set up the base environment:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+2. Train or refresh the adapter:
+
+```bash
+python train_adapter.py --config configs/adapter.yaml --dry-run
+python train_adapter.py --config configs/adapter.yaml
+```
+
+The default adapter output is `adapters/latest`, matching
+`configs/vllm.yaml`.
+
+3. Install vLLM and serve the adapter:
+
+```bash
+pip install -r requirements-vllm.txt
+python serve_vllm_adapter.py --config configs/vllm.yaml --dry-run
+python serve_vllm_adapter.py --config configs/vllm.yaml
+```
+
+The helper reads `model.base_url` for the default host and port. Override them
+when needed:
+
+```bash
+python serve_vllm_adapter.py --config configs/vllm.yaml --host 0.0.0.0 --port 8000
+```
+
+4. Validate one task before starting the continuous loop:
+
+```bash
+python agent_harness/run_task.py \
+  --task tasks/replace_token.yaml \
+  --config configs/vllm.yaml \
+  --run-dir runs/vllm-smoke
+```
+
+5. Run one foreground CSI iteration for a smoke test, or start continuous mode:
+
+```bash
+python csi.py --config configs/vllm.yaml _daemon --foreground
+python csi.py --config configs/vllm.yaml start
+python csi.py --config configs/vllm.yaml status
+python csi.py --config configs/vllm.yaml dashboard
+python csi.py --config configs/vllm.yaml stop
+```
+
+The dashboard is served at `http://127.0.0.1:8765` by default.
+
+Common failure modes:
+
+- `model.adapter_path does not exist`: train the adapter first, or update
+  `configs/vllm.yaml` to the adapter directory you want to serve.
+- `Could not reach local vLLM OpenAI server`: start `serve_vllm_adapter.py`, or
+  make `model.base_url` match the vLLM host and port.
+- `The model ... does not exist`: confirm `model.adapter_name` matches the
+  module name in the helper dry-run command.
+- CUDA or package import failures: install `requirements-vllm.txt` in the active
+  environment and run on a CUDA-capable machine supported by vLLM.
 
 ## Hardware Policy
 
@@ -96,6 +165,7 @@ python agent_harness/run_task.py --task tasks/replace_token.yaml --config config
 python score_candidate.py --run runs/<run-id>
 python train_adapter.py --config configs/adapter.yaml --dry-run
 python train_adapter.py --config configs/adapter.yaml
+python serve_vllm_adapter.py --config configs/vllm.yaml --dry-run
 ```
 
 The `csi.py` commands run the experiment loop continuously in a local

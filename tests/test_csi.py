@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import csi
+from interpretability.config import load_yaml
 from interpretability.resources import ResourceSnapshot
 
 
@@ -97,6 +98,34 @@ def test_daemon_iteration_runs_one_trial_cycle(tmp_path: Path, monkeypatch) -> N
     assert written["total_trials"] == 1
     assert written["accepted_trials"] == 1
     assert (tmp_path / "summary.json").exists()
+
+
+def test_daemon_iteration_passes_vllm_model_config_to_backend(tmp_path: Path, monkeypatch) -> None:
+    config = load_yaml("configs/vllm.yaml")
+    config["resources"]["min_available_memory_gib"] = 4
+    snapshot = ResourceSnapshot(4, 1.0, 0.25, 16.0, 12.0, False, 0, False, False)
+    captured: dict = {}
+    monkeypatch.setattr(csi, "detect_resources", lambda: snapshot)
+    monkeypatch.setattr(csi, "make_backend", lambda cfg: captured.setdefault("model", cfg) or object())
+    monkeypatch.setattr(csi, "load_yaml", lambda path: {})
+
+    def baseline(*args, **kwargs):
+        run_dir = tmp_path / "baseline-run"
+        run_dir.mkdir()
+        return FakeScore(1.0, 0.0, True, "baseline", {}), run_dir
+
+    def trial(*args, **kwargs):
+        run_dir = tmp_path / "trial-run"
+        run_dir.mkdir()
+        return FakeScore(1.0, 0.8, True, "accepted", {}), run_dir
+
+    monkeypatch.setattr(csi, "run_baseline_cycle", baseline)
+    monkeypatch.setattr(csi, "run_one_trial_cycle", trial)
+
+    assert csi.daemon_iteration(config, tmp_path / "csi", tmp_path, {})
+    assert captured["model"]["backend"] == "vllm_openai"
+    assert captured["model"]["adapter_name"] == "interpretable-agent-lora"
+    assert captured["model"]["adapter_path"] == "adapters/latest"
 
 
 def test_dashboard_renders_fixture_state(tmp_path: Path) -> None:
