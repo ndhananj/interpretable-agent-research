@@ -158,6 +158,9 @@ def validate_model_config(config: dict[str, Any]) -> dict[str, Any]:
     if backend == "vllm_openai":
         adapter_name = config.get("adapter_name")
         adapter_path = config.get("adapter_path")
+        max_tokens = int(config.get("max_tokens", 1024))
+        raw_max_model_len = config.get("max_model_len")
+        max_model_len = int(raw_max_model_len) if raw_max_model_len is not None else None
         if adapter_name is not None and (not isinstance(adapter_name, str) or not adapter_name.strip()):
             raise ValueError("model.adapter_name must be a non-empty string when provided")
         if adapter_name is not None and (not isinstance(adapter_path, str) or not adapter_path.strip()):
@@ -166,6 +169,11 @@ def validate_model_config(config: dict[str, Any]) -> dict[str, Any]:
             )
         if adapter_path is not None and (not isinstance(adapter_path, str) or not adapter_path.strip()):
             raise ValueError("model.adapter_path must be a non-empty string when provided")
+        if max_model_len is not None and max_tokens >= max_model_len:
+            raise ValueError(
+                "model.max_tokens must be less than model.max_model_len because vLLM requires "
+                "prompt_tokens + max_tokens <= max_model_len"
+            )
         return {
             "backend": backend,
             "base_url": str(config.get("base_url", "http://127.0.0.1:8000")),
@@ -173,7 +181,8 @@ def validate_model_config(config: dict[str, Any]) -> dict[str, Any]:
             "adapter_name": adapter_name,
             "timeout_s": float(config.get("timeout_s", 30)),
             "temperature": float(config.get("temperature", 0.0)),
-            "max_tokens": int(config.get("max_tokens", 1024)),
+            "max_tokens": max_tokens,
+            "max_model_len": max_model_len,
         }
     raise NotImplementedError(
         f"Backend {backend!r} is not implemented. Use 'mock' or 'vllm_openai'."

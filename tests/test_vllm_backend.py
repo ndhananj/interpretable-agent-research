@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness.backends import BackendError, VLLMOpenAIBackend, make_backend
+from agent_harness.backends import BackendError, VLLMOpenAIBackend, make_backend, validate_model_config
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -114,3 +114,27 @@ def test_make_backend_creates_vllm_without_network_call() -> None:
 def test_make_backend_requires_adapter_path_with_adapter_name() -> None:
     with pytest.raises(ValueError, match="adapter_path"):
         make_backend({"backend": "vllm_openai", "adapter_name": "adapter"})
+
+
+def test_vllm_config_rejects_completion_budget_equal_to_context_window() -> None:
+    with pytest.raises(ValueError, match=r"prompt_tokens \+ max_tokens <= max_model_len"):
+        validate_model_config(
+            {
+                "backend": "vllm_openai",
+                "max_model_len": 1024,
+                "max_tokens": 1024,
+            }
+        )
+
+
+def test_vllm_config_accepts_completion_budget_below_context_window() -> None:
+    config = validate_model_config(
+        {
+            "backend": "vllm_openai",
+            "max_model_len": 1024,
+            "max_tokens": 512,
+        }
+    )
+
+    assert config["max_model_len"] == 1024
+    assert config["max_tokens"] == 512

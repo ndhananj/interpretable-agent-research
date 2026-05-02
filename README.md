@@ -223,7 +223,8 @@ For small GPUs, keep `model.max_model_len`, `model.max_num_batched_tokens`,
 `model.max_num_seqs`, `model.gpu_memory_utilization`, and
 `model.enforce_eager` conservative until vLLM starts reliably. Raise
 `max_model_len` and `max_num_batched_tokens` together later only if the workload
-needs more context and startup still fits in VRAM.
+needs more context and startup still fits in VRAM. Keep `model.max_tokens` below
+`model.max_model_len` so requests leave room for the prompt.
 
 4. Validate one task before starting the continuous loop:
 
@@ -254,6 +255,10 @@ Common failure modes:
   make `model.base_url` match the vLLM host and port.
 - `The model ... does not exist`: confirm `model.adapter_name` matches the
   module name in the helper dry-run command.
+- `maximum context length ... requested ... messages ... completion`: vLLM
+  requires `prompt_tokens + max_tokens <= max_model_len`. Lower
+  `model.max_tokens`, or raise both `model.max_model_len` and
+  `model.max_num_batched_tokens` if VRAM allows.
 - `vLLM CUDA preflight failed`: the helper found a PyTorch/CUDA/driver mismatch
   before starting vLLM. The known bad local combination is `torch 2.11.0+cu130`
   / CUDA 13 packages on a CUDA 12.2-era driver. Reinstall a driver-compatible
