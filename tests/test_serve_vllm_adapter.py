@@ -9,6 +9,8 @@ import pytest
 from interpretability.config import load_yaml
 import serve_vllm_adapter
 from serve_vllm_adapter import (
+    evaluate_dependency_compatibility,
+    format_dependency_repair_command,
     _resolve_vllm_executable,
     build_vllm_command,
     format_cuda_preflight_error,
@@ -97,10 +99,35 @@ def test_build_vllm_command_rejects_nonexistent_adapter_path_before_launch(tmp_p
         build_vllm_command(config, config_path="configs/vllm.yaml", require_adapter_path_exists=True)
 
 
+def test_dependency_compatibility_accepts_known_good_versions() -> None:
+    error = evaluate_dependency_compatibility({"vllm": "0.6.6.post1", "transformers": "4.56.2"})
+
+    assert error is None
+
+
+def test_dependency_compatibility_rejects_vllm_066_with_transformers_5() -> None:
+    error = evaluate_dependency_compatibility({"vllm": "0.6.6.post1", "transformers": "5.7.0"})
+
+    assert error is not None
+    assert "vllm==0.6.6.post1 requires transformers<5" in error.reason
+    assert "installed transformers is 5.7.0" in error.reason
+    assert error.repair_command == "uv pip install 'transformers>=4.56.2,<5'"
+
+
+def test_dependency_repair_command_quotes_version_range() -> None:
+    assert format_dependency_repair_command("transformers>=4.56.2,<5") == (
+        "uv pip install 'transformers>=4.56.2,<5'"
+    )
+
+
 def test_cuda_preflight_passes_when_cuda_device_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(serve_vllm_adapter.importlib, "import_module", lambda name: _fake_torch())
     monkeypatch.setattr(serve_vllm_adapter, "_run_nvidia_smi_list", lambda: "GPU 0: Test GPU")
-    monkeypatch.setattr(serve_vllm_adapter, "_get_installed_package_version", lambda package: "0.6.6.post1")
+    monkeypatch.setattr(
+        serve_vllm_adapter,
+        "_get_installed_package_version",
+        lambda package: {"vllm": "0.6.6.post1", "transformers": "4.56.2"}[package],
+    )
     monkeypatch.setattr(serve_vllm_adapter, "_run_vllm_native_import", lambda: None)
 
     result = run_cuda_preflight()
@@ -112,7 +139,36 @@ def test_cuda_preflight_passes_when_cuda_device_is_visible(monkeypatch: pytest.M
     assert result.cuda_available is True
     assert result.device_count == 1
     assert result.vllm_version == "0.6.6.post1"
+    assert result.transformers_version == "4.56.2"
+    assert result.dependency_error is None
     assert result.vllm_native_import is None
+
+
+def test_cuda_preflight_fails_fast_on_dependency_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _raise_native_import() -> None:
+        raise AssertionError("native import should not run when dependencies are incompatible")
+
+    monkeypatch.setattr(
+        serve_vllm_adapter,
+        "_get_installed_package_version",
+        lambda package: {"vllm": "0.6.6.post1", "transformers": "5.7.0"}[package],
+    )
+    monkeypatch.setattr(serve_vllm_adapter, "_run_nvidia_smi_list", lambda: "GPU 0: Test GPU")
+    monkeypatch.setattr(serve_vllm_adapter, "_run_vllm_native_import", _raise_native_import)
+
+    result = run_cuda_preflight()
+    message = format_cuda_preflight_error(result)
+
+    assert result.ok is False
+    assert result.vllm_version == "0.6.6.post1"
+    assert result.transformers_version == "5.7.0"
+    assert result.dependency_error is not None
+    assert "Python package dependency mismatch" in message
+    assert "vLLM: 0.6.6.post1" in message
+    assert "transformers: 5.7.0" in message
+    assert "uv pip install 'transformers>=4.56.2,<5'" in message
+    assert "python serve_vllm_adapter.py --config configs/vllm.yaml" in message
+    assert "pip uninstall -y vllm torch" not in message
 
 
 def test_cuda_preflight_fails_when_vllm_native_import_fails(monkeypatch: pytest.MonkeyPatch) -> None:

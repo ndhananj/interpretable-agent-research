@@ -4,6 +4,5 @@ peft
 psutil
 pyyaml
 torch
-transformers
+transformers>=4.56.2,<5
 trl
-

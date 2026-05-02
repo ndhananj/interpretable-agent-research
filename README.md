@@ -55,6 +55,15 @@ python serve_vllm_adapter.py --config configs/vllm.yaml --dry-run
 python serve_vllm_adapter.py --config configs/vllm.yaml
 ```
 
+If preflight reports `vllm==0.6.6.post1` with an incompatible
+`transformers` version, keep `adapters/latest` as-is and only repair the active
+vLLM environment:
+
+```bash
+uv pip install 'transformers>=4.56.2,<5'
+python serve_vllm_adapter.py --config configs/vllm.yaml
+```
+
 The current bad state observed on this machine is `torch 2.11.0+cu130` with
 CUDA 13 packages on a CUDA 12.2-era NVIDIA driver. Keeping the driver means
 reinstalling a driver-compatible vLLM/PyTorch wheel set. The other valid fix is
@@ -114,6 +123,15 @@ If this environment already contains the CUDA 13 stack, remove it first:
 ```bash
 pip uninstall -y vllm torch torchvision torchaudio 'nvidia-*'
 uv pip install vllm --torch-backend=auto
+```
+
+If preflight instead reports only a package compatibility issue such as
+`vllm==0.6.6.post1` with `transformers>=5`, do not retrain the adapter. Repair
+the active vLLM environment and rerun serve:
+
+```bash
+uv pip install 'transformers>=4.56.2,<5'
+python serve_vllm_adapter.py --config configs/vllm.yaml
 ```
 
 `uv pip install vllm --torch-backend=auto` follows vLLM's GPU install guidance

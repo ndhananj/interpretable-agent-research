@@ -16,6 +16,12 @@ from interpretability.config import load_yaml
 
 
 @dataclass(frozen=True)
+class DependencyCompatibilityError:
+    reason: str
+    repair_command: str
+
+
+@dataclass(frozen=True)
 class CudaPreflightResult:
     ok: bool
     python_executable: str = "unknown"
@@ -25,8 +31,14 @@ class CudaPreflightResult:
     device_count: int | None = None
     nvidia_smi: str | None = None
     vllm_version: str = "unknown"
+    transformers_version: str = "unknown"
+    dependency_error: DependencyCompatibilityError | None = None
     vllm_native_import: str | None = None
     error: str | None = None
+
+
+DEPENDENCY_PACKAGES = ("vllm", "transformers")
+VLLM_066_POST1_TRANSFORMERS_SPEC = "transformers>=4.56.2,<5"
 
 
 def _host_port_from_base_url(base_url: str) -> tuple[str, int]:
@@ -98,7 +110,20 @@ def _resolve_adapter_path(adapter_path: str) -> Path:
 
 def run_cuda_preflight() -> CudaPreflightResult:
     python_executable = sys.executable
-    vllm_version = _get_installed_package_version("vllm")
+    package_versions = get_installed_dependency_versions()
+    vllm_version = package_versions["vllm"]
+    transformers_version = package_versions["transformers"]
+    dependency_error = evaluate_dependency_compatibility(package_versions)
+    if dependency_error is not None:
+        return CudaPreflightResult(
+            ok=False,
+            python_executable=python_executable,
+            vllm_version=vllm_version,
+            transformers_version=transformers_version,
+            dependency_error=dependency_error,
+            error="Python package dependency mismatch",
+        )
+
     nvidia_smi = _run_nvidia_smi_list()
     vllm_native_import = _run_vllm_native_import()
 
@@ -110,6 +135,7 @@ def run_cuda_preflight() -> CudaPreflightResult:
             python_executable=python_executable,
             nvidia_smi=nvidia_smi,
             vllm_version=vllm_version,
+            transformers_version=transformers_version,
             vllm_native_import=vllm_native_import,
             error=f"torch import failed: {exc}",
         )
@@ -126,6 +152,7 @@ def run_cuda_preflight() -> CudaPreflightResult:
             torch_cuda=torch_cuda,
             nvidia_smi=nvidia_smi,
             vllm_version=vllm_version,
+            transformers_version=transformers_version,
             vllm_native_import=vllm_native_import,
             error="installed torch does not include CUDA support",
         )
@@ -145,6 +172,7 @@ def run_cuda_preflight() -> CudaPreflightResult:
             torch_cuda=torch_cuda,
             nvidia_smi=nvidia_smi,
             vllm_version=vllm_version,
+            transformers_version=transformers_version,
             vllm_native_import=vllm_native_import,
             error=f"torch.cuda.is_available() failed: {exc}",
         )
@@ -162,6 +190,7 @@ def run_cuda_preflight() -> CudaPreflightResult:
                 cuda_available=cuda_available,
                 nvidia_smi=nvidia_smi,
                 vllm_version=vllm_version,
+                transformers_version=transformers_version,
                 vllm_native_import=vllm_native_import,
                 error=f"torch.cuda.device_count() failed: {exc}",
             )
@@ -179,6 +208,7 @@ def run_cuda_preflight() -> CudaPreflightResult:
             device_count=device_count,
             nvidia_smi=nvidia_smi,
             vllm_version=vllm_version,
+            transformers_version=transformers_version,
             vllm_native_import=vllm_native_import,
             error=error,
         )
@@ -192,6 +222,7 @@ def run_cuda_preflight() -> CudaPreflightResult:
             device_count=device_count,
             nvidia_smi=nvidia_smi,
             vllm_version=vllm_version,
+            transformers_version=transformers_version,
             vllm_native_import=vllm_native_import,
             error="torch reports zero visible CUDA devices",
         )
@@ -205,6 +236,7 @@ def run_cuda_preflight() -> CudaPreflightResult:
             device_count=device_count,
             nvidia_smi=nvidia_smi,
             vllm_version=vllm_version,
+            transformers_version=transformers_version,
             vllm_native_import=vllm_native_import,
             error="nvidia-smi -L failed",
         )
@@ -218,6 +250,7 @@ def run_cuda_preflight() -> CudaPreflightResult:
             device_count=device_count,
             nvidia_smi=nvidia_smi,
             vllm_version=vllm_version,
+            transformers_version=transformers_version,
             vllm_native_import=vllm_native_import,
             error="vLLM native extension import failed",
         )
@@ -230,7 +263,52 @@ def run_cuda_preflight() -> CudaPreflightResult:
         device_count=device_count,
         nvidia_smi=nvidia_smi,
         vllm_version=vllm_version,
+        transformers_version=transformers_version,
     )
+
+
+def get_installed_dependency_versions(packages: tuple[str, ...] = DEPENDENCY_PACKAGES) -> dict[str, str]:
+    return {package: _get_installed_package_version(package) for package in packages}
+
+
+def evaluate_dependency_compatibility(package_versions: dict[str, str]) -> DependencyCompatibilityError | None:
+    vllm_version = package_versions.get("vllm", "unknown")
+    transformers_version = package_versions.get("transformers", "unknown")
+    if _version_equals(vllm_version, "0.6.6.post1") and not _version_less_than(transformers_version, "5"):
+        return DependencyCompatibilityError(
+            reason=(
+                "vllm==0.6.6.post1 requires transformers<5; "
+                f"installed transformers is {transformers_version}"
+            ),
+            repair_command=format_dependency_repair_command(VLLM_066_POST1_TRANSFORMERS_SPEC),
+        )
+    return None
+
+
+def format_dependency_repair_command(requirement: str) -> str:
+    return f"uv pip install {shlex.quote(requirement)}"
+
+
+def _version_equals(installed: str, expected: str) -> bool:
+    return _version_key(installed) == _version_key(expected)
+
+
+def _version_less_than(installed: str, upper_bound: str) -> bool:
+    installed_key = _version_key(installed)
+    upper_bound_key = _version_key(upper_bound)
+    return installed_key is not None and upper_bound_key is not None and installed_key < upper_bound_key
+
+
+def _version_key(version: str) -> tuple[int, ...] | None:
+    head = version.split("+", 1)[0]
+    parts: list[int] = []
+    for part in head.replace(".post", ".").split("."):
+        if not part:
+            continue
+        if not part.isdigit():
+            return None
+        parts.append(int(part))
+    return tuple(parts) if parts else None
 
 
 def _get_installed_package_version(package: str) -> str:
@@ -305,6 +383,7 @@ def format_cuda_preflight_error(result: CudaPreflightResult) -> str:
         f"torch.version.cuda: {result.torch_cuda}",
         f"torch.cuda.is_available(): {result.cuda_available}",
         f"vLLM: {result.vllm_version}",
+        f"transformers: {result.transformers_version}",
     ]
     if result.device_count is not None:
         lines.append(f"torch.cuda.device_count(): {result.device_count}")
@@ -314,6 +393,19 @@ def format_cuda_preflight_error(result: CudaPreflightResult) -> str:
         lines.append(f"vLLM native import: {result.vllm_native_import}")
     if result.error:
         lines.append(f"reason: {result.error}")
+    if result.dependency_error is not None:
+        lines.extend(
+            [
+                f"dependency: {result.dependency_error.reason}",
+                "",
+                "Repair the active vLLM environment without retraining or changing adapters/latest:",
+                f"  {result.dependency_error.repair_command}",
+                "  python serve_vllm_adapter.py --config configs/vllm.yaml",
+                "",
+                "Use --skip-preflight only when debugging raw vLLM startup behavior.",
+            ]
+        )
+        return "\n".join(lines)
     if result.vllm_native_import and "libcudart.so." in result.vllm_native_import:
         lines.extend(
             [
