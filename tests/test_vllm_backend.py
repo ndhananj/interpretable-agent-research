@@ -11,6 +11,8 @@ from agent_harness.backends import BackendError, VLLMOpenAIBackend, make_backend
 
 
 class _Handler(BaseHTTPRequestHandler):
+    response_status = 200
+    response_body = None
     response_content = {
         "decision_trace": "edit the file",
         "edits": {"input.txt": "DONE\n"},
@@ -21,22 +23,21 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         self.__class__.request_payload = json.loads(body)
-        self.send_response(200)
+        self.send_response(self.response_status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(
-            json.dumps(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": json.dumps(self.response_content),
-                            }
+        response_body = self.response_body
+        if response_body is None:
+            response_body = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(self.response_content),
                         }
-                    ]
-                }
-            ).encode("utf-8")
-        )
+                    }
+                ]
+            }
+        self.wfile.write(json.dumps(response_body).encode("utf-8"))
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -44,6 +45,8 @@ class _Handler(BaseHTTPRequestHandler):
 
 @pytest.fixture()
 def fake_server() -> str:
+    _Handler.response_status = 200
+    _Handler.response_body = None
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -52,6 +55,8 @@ def fake_server() -> str:
     finally:
         server.shutdown()
         server.server_close()
+        _Handler.response_status = 200
+        _Handler.response_body = None
 
 
 def test_vllm_response_becomes_agent_action(fake_server: str, tmp_path: Path) -> None:
@@ -70,6 +75,24 @@ def test_vllm_unreachable_server_raises_clear_error(tmp_path: Path) -> None:
 
     with pytest.raises(BackendError, match="Could not reach local vLLM OpenAI server"):
         backend.propose_actions("replace token", tmp_path)
+
+
+def test_vllm_http_error_includes_status_and_server_body(fake_server: str, tmp_path: Path) -> None:
+    _Handler.response_status = 400
+    _Handler.response_body = {
+        "error": {
+            "message": "response_format json_object is not supported by this model",
+            "type": "BadRequestError",
+        }
+    }
+    backend = VLLMOpenAIBackend(base_url=fake_server, model_name="base")
+
+    with pytest.raises(BackendError) as exc_info:
+        backend.propose_actions("replace token", tmp_path)
+
+    message = str(exc_info.value)
+    assert "HTTP 400" in message
+    assert "response_format json_object is not supported by this model" in message
 
 
 def test_vllm_invalid_model_json_is_rejected(fake_server: str, tmp_path: Path) -> None:

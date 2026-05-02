@@ -108,6 +108,13 @@ class VLLMOpenAIBackend(ModelBackend):
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
                 body = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            detail = f": {error_body}" if error_body else ""
+            raise BackendError(
+                "vLLM OpenAI server rejected /v1/chat/completions "
+                f"with HTTP {exc.code} {exc.reason}{detail}"
+            ) from exc
         except (ConnectionError, TimeoutError, socket.timeout, urllib.error.URLError) as exc:
             raise BackendError(
                 f"Could not reach local vLLM OpenAI server at {self.base_url}. "
