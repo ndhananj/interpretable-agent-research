@@ -55,6 +55,16 @@ python serve_vllm_adapter.py --config configs/vllm.yaml --dry-run
 python serve_vllm_adapter.py --config configs/vllm.yaml
 ```
 
+The default vLLM config sets `model.dtype: half`, so the dry run includes:
+
+```bash
+vllm serve Qwen/Qwen2.5-Coder-1.5B-Instruct --enable-lora --lora-modules interpretable-agent-lora=.../adapters/latest --host 127.0.0.1 --port 8000 --dtype half
+```
+
+RTX 20xx/Turing GPUs such as the RTX 2060 do not support the model's automatic
+`bfloat16` serve path. Keep `model.dtype: half` in `configs/vllm.yaml`, or pass
+`--dtype half` when launching the helper.
+
 If preflight reports `vllm==0.6.6.post1` with an incompatible
 `transformers` version, keep `adapters/latest` as-is and only repair the active
 vLLM environment:
@@ -156,10 +166,11 @@ the verification commands above in the existing or rebuilt vLLM environment. If
 the system-driver layer even if Python packages are corrected.
 
 The helper reads `model.base_url` for the default host and port. Override them
-when needed:
+when needed. Override dtype the same way if you need a different vLLM dtype:
 
 ```bash
 python serve_vllm_adapter.py --config configs/vllm.yaml --host 0.0.0.0 --port 8000
+python serve_vllm_adapter.py --config configs/vllm.yaml --dtype half
 ```
 
 4. Validate one task before starting the continuous loop:
@@ -196,6 +207,9 @@ Common failure modes:
   / CUDA 13 packages on a CUDA 12.2-era driver. Reinstall a driver-compatible
   vLLM/PyTorch stack, or update the NVIDIA driver. Use `--skip-preflight` only
   when you need the raw vLLM startup error for debugging.
+- `Bfloat16 is only supported on GPUs with compute capability of at least 8.0`:
+  keep `model.dtype: half` in `configs/vllm.yaml`, or launch with
+  `--dtype half` on RTX 20xx/Turing GPUs.
 - CUDA or package import failures: install the optional vLLM stack in the active
   environment and run on a CUDA-capable machine supported by vLLM.
 

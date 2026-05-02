@@ -8,6 +8,7 @@ experiment:
 model:
   backend: vllm_openai
   name: Qwen/Qwen2.5-Coder-1.5B-Instruct
+  dtype: half
   adapter_name: interpretable-agent-lora
   adapter_path: adapters/latest
   base_url: http://127.0.0.1:8000

@@ -65,6 +65,7 @@ def build_vllm_command(
     config_path: str | Path = "configs/vllm.yaml",
     host: str | None = None,
     port: int | None = None,
+    dtype: str | None = None,
     require_adapter_path_exists: bool = True,
 ) -> list[str]:
     model = validate_vllm_model_config(config)
@@ -72,6 +73,7 @@ def build_vllm_command(
     adapter_name = model["adapter_name"]
     adapter_path = model["adapter_path"]
     base_url = model["base_url"]
+    configured_dtype = dtype if dtype is not None else model.get("dtype")
 
     default_host, default_port = _host_port_from_base_url(base_url)
     serve_host = host or default_host
@@ -83,7 +85,7 @@ def build_vllm_command(
     if require_adapter_path_exists and not resolved_adapter_path.exists():
         raise SystemExit(f"model.adapter_path does not exist: {resolved_adapter_path}")
 
-    return [
+    cmd = [
         "vllm",
         "serve",
         base_model,
@@ -95,6 +97,9 @@ def build_vllm_command(
         "--port",
         str(serve_port),
     ]
+    if configured_dtype is not None:
+        cmd.extend(["--dtype", configured_dtype])
+    return cmd
 
 
 def validate_vllm_model_config(config: dict[str, Any]) -> dict[str, str]:
@@ -115,6 +120,11 @@ def validate_vllm_model_config(config: dict[str, Any]) -> dict[str, str]:
         if not isinstance(value, str) or not value.strip():
             raise SystemExit(message)
         values[key] = value
+    dtype = model.get("dtype")
+    if dtype is not None:
+        if not isinstance(dtype, str) or not dtype.strip():
+            raise SystemExit("model.dtype must be a non-empty vLLM dtype string when set")
+        values["dtype"] = dtype
     return values
 
 
@@ -460,6 +470,7 @@ def main() -> None:
     parser.add_argument("--config", default="configs/vllm.yaml")
     parser.add_argument("--host")
     parser.add_argument("--port", type=int)
+    parser.add_argument("--dtype", help="Override model.dtype for vLLM, for example half or float16.")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--skip-preflight",
@@ -474,6 +485,7 @@ def main() -> None:
         config_path=args.config,
         host=args.host,
         port=args.port,
+        dtype=args.dtype,
         require_adapter_path_exists=not args.dry_run,
     )
     if args.dry_run:

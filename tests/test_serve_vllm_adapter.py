@@ -55,6 +55,8 @@ def test_build_vllm_command_from_config_dry_run() -> None:
         "127.0.0.1",
         "--port",
         "8000",
+        "--dtype",
+        "half",
     ]
 
 
@@ -69,7 +71,57 @@ def test_build_vllm_command_accepts_host_port_overrides() -> None:
         require_adapter_path_exists=False,
     )
 
-    assert cmd[-4:] == ["--host", "0.0.0.0", "--port", "8010"]
+    host_index = cmd.index("--host")
+    assert cmd[host_index : host_index + 4] == ["--host", "0.0.0.0", "--port", "8010"]
+
+
+def test_build_vllm_command_accepts_dtype_override() -> None:
+    config = load_yaml("configs/vllm.yaml")
+
+    cmd = build_vllm_command(
+        config,
+        config_path="configs/vllm.yaml",
+        dtype="float16",
+        require_adapter_path_exists=False,
+    )
+
+    assert cmd[-2:] == ["--dtype", "float16"]
+
+
+def test_build_vllm_command_allows_omitted_dtype() -> None:
+    config = load_yaml("configs/vllm.yaml")
+    del config["model"]["dtype"]
+
+    cmd = build_vllm_command(config, config_path="configs/vllm.yaml", require_adapter_path_exists=False)
+
+    assert "--dtype" not in cmd
+
+
+def test_main_forwards_dtype_cli_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, str | None] = {}
+
+    def _fake_build_vllm_command(
+        config: dict[str, object],
+        *,
+        config_path: str,
+        host: str | None,
+        port: int | None,
+        dtype: str | None,
+        require_adapter_path_exists: bool,
+    ) -> list[str]:
+        captured["dtype"] = dtype
+        return ["vllm", "serve", "model", "--dtype", dtype or ""]
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["serve_vllm_adapter.py", "--config", "configs/vllm.yaml", "--dtype", "float16", "--dry-run"],
+    )
+    monkeypatch.setattr(serve_vllm_adapter, "build_vllm_command", _fake_build_vllm_command)
+
+    serve_vllm_adapter.main()
+
+    assert captured["dtype"] == "float16"
 
 
 def test_resolve_vllm_executable_prefers_current_python_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
