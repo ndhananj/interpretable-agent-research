@@ -99,10 +99,20 @@ def build_vllm_command(
     ]
     if configured_dtype is not None:
         cmd.extend(["--dtype", configured_dtype])
+    for config_key, flag in (
+        ("max_model_len", "--max-model-len"),
+        ("max_num_batched_tokens", "--max-num-batched-tokens"),
+        ("max_num_seqs", "--max-num-seqs"),
+        ("gpu_memory_utilization", "--gpu-memory-utilization"),
+    ):
+        if config_key in model:
+            cmd.extend([flag, str(model[config_key])])
+    if model.get("enforce_eager") is True:
+        cmd.append("--enforce-eager")
     return cmd
 
 
-def validate_vllm_model_config(config: dict[str, Any]) -> dict[str, str]:
+def validate_vllm_model_config(config: dict[str, Any]) -> dict[str, Any]:
     model = config.get("model")
     if not isinstance(model, dict):
         raise SystemExit("Config must include a model mapping")
@@ -125,7 +135,30 @@ def validate_vllm_model_config(config: dict[str, Any]) -> dict[str, str]:
         if not isinstance(dtype, str) or not dtype.strip():
             raise SystemExit("model.dtype must be a non-empty vLLM dtype string when set")
         values["dtype"] = dtype
+    for key in ("max_model_len", "max_num_batched_tokens", "max_num_seqs"):
+        if key in model:
+            values[key] = _validate_positive_int(model[key], f"model.{key}")
+    if "gpu_memory_utilization" in model:
+        gpu_memory_utilization = model["gpu_memory_utilization"]
+        if not isinstance(gpu_memory_utilization, (int, float)) or isinstance(gpu_memory_utilization, bool):
+            raise SystemExit("model.gpu_memory_utilization must be a number greater than 0 and at most 1")
+        if gpu_memory_utilization <= 0 or gpu_memory_utilization > 1:
+            raise SystemExit("model.gpu_memory_utilization must be greater than 0 and at most 1")
+        values["gpu_memory_utilization"] = gpu_memory_utilization
+    if "enforce_eager" in model:
+        enforce_eager = model["enforce_eager"]
+        if not isinstance(enforce_eager, bool):
+            raise SystemExit("model.enforce_eager must be a boolean when set")
+        values["enforce_eager"] = enforce_eager
     return values
+
+
+def _validate_positive_int(value: object, key: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise SystemExit(f"{key} must be a positive integer")
+    if value <= 0:
+        raise SystemExit(f"{key} must be a positive integer")
+    return value
 
 
 def _resolve_adapter_path(adapter_path: str) -> Path:

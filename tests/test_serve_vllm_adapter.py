@@ -57,6 +57,15 @@ def test_build_vllm_command_from_config_dry_run() -> None:
         "8000",
         "--dtype",
         "half",
+        "--max-model-len",
+        "4096",
+        "--max-num-batched-tokens",
+        "1024",
+        "--max-num-seqs",
+        "1",
+        "--gpu-memory-utilization",
+        "0.8",
+        "--enforce-eager",
     ]
 
 
@@ -85,7 +94,8 @@ def test_build_vllm_command_accepts_dtype_override() -> None:
         require_adapter_path_exists=False,
     )
 
-    assert cmd[-2:] == ["--dtype", "float16"]
+    dtype_index = cmd.index("--dtype")
+    assert cmd[dtype_index : dtype_index + 2] == ["--dtype", "float16"]
 
 
 def test_build_vllm_command_allows_omitted_dtype() -> None:
@@ -95,6 +105,29 @@ def test_build_vllm_command_allows_omitted_dtype() -> None:
     cmd = build_vllm_command(config, config_path="configs/vllm.yaml", require_adapter_path_exists=False)
 
     assert "--dtype" not in cmd
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("max_model_len", 0, "model.max_model_len must be a positive integer"),
+        ("max_num_batched_tokens", -1, "model.max_num_batched_tokens must be a positive integer"),
+        ("max_num_seqs", 0, "model.max_num_seqs must be a positive integer"),
+        ("gpu_memory_utilization", 1.1, "model.gpu_memory_utilization must be greater than 0 and at most 1"),
+        ("gpu_memory_utilization", 0, "model.gpu_memory_utilization must be greater than 0 and at most 1"),
+        ("enforce_eager", "true", "model.enforce_eager must be a boolean when set"),
+    ],
+)
+def test_build_vllm_command_rejects_invalid_vllm_runtime_options(
+    key: str,
+    value: object,
+    message: str,
+) -> None:
+    config = load_yaml("configs/vllm.yaml")
+    config["model"][key] = value
+
+    with pytest.raises(SystemExit, match=message):
+        build_vllm_command(config, config_path="configs/vllm.yaml", require_adapter_path_exists=False)
 
 
 def test_main_forwards_dtype_cli_override(monkeypatch: pytest.MonkeyPatch) -> None:
