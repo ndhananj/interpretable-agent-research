@@ -121,7 +121,7 @@ python serve_vllm_adapter.py --config configs/vllm.yaml
 If this environment already contains the CUDA 13 stack, remove it first:
 
 ```bash
-pip uninstall -y vllm torch torchvision torchaudio 'nvidia-*'
+pip uninstall -y vllm torch torchvision torchaudio cuda-toolkit cuda-bindings cuda-python
 uv pip install vllm --torch-backend=auto
 ```
 

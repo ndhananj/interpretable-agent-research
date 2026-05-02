@@ -39,6 +39,15 @@ class CudaPreflightResult:
 
 DEPENDENCY_PACKAGES = ("vllm", "transformers")
 VLLM_066_POST1_TRANSFORMERS_SPEC = "transformers>=4.56.2,<5"
+CUDA_STACK_CLEANUP_PACKAGES = (
+    "vllm",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "cuda-toolkit",
+    "cuda-bindings",
+    "cuda-python",
+)
 
 
 def _host_port_from_base_url(base_url: str) -> tuple[str, int]:
@@ -297,6 +306,10 @@ def format_dependency_repair_command(requirement: str) -> str:
     return f"uv pip install {shlex.quote(requirement)}"
 
 
+def format_cuda_stack_cleanup_command(packages: tuple[str, ...] = CUDA_STACK_CLEANUP_PACKAGES) -> str:
+    return f"pip uninstall -y {' '.join(shlex.quote(package) for package in packages)}"
+
+
 def _version_equals(installed: str, expected: str) -> bool:
     return _version_key(installed) == _version_key(expected)
 
@@ -428,7 +441,7 @@ def format_cuda_preflight_error(result: CudaPreflightResult) -> str:
             "Recommended repair order:",
             "  1. Fix or reload the NVIDIA driver until `nvidia-smi` works.",
             "  2. Rebuild or repair the active vLLM environment:",
-            "     pip uninstall -y vllm torch torchvision torchaudio 'nvidia-*' cuda-toolkit cuda-bindings cuda-python",
+            f"     {format_cuda_stack_cleanup_command()}",
             "     uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121",
             "     uv pip install vllm==0.6.6.post1 --torch-backend=cu121",
             "  3. Verify:",

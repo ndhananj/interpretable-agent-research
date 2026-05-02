@@ -10,6 +10,7 @@ from interpretability.config import load_yaml
 import serve_vllm_adapter
 from serve_vllm_adapter import (
     evaluate_dependency_compatibility,
+    format_cuda_stack_cleanup_command,
     format_dependency_repair_command,
     _resolve_vllm_executable,
     build_vllm_command,
@@ -120,6 +121,16 @@ def test_dependency_repair_command_quotes_version_range() -> None:
     )
 
 
+def test_cuda_stack_cleanup_command_uses_explicit_package_names() -> None:
+    command = format_cuda_stack_cleanup_command()
+
+    assert command == (
+        "pip uninstall -y vllm torch torchvision torchaudio "
+        "cuda-toolkit cuda-bindings cuda-python"
+    )
+    assert "nvidia-*" not in command
+
+
 def test_cuda_preflight_passes_when_cuda_device_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(serve_vllm_adapter.importlib, "import_module", lambda name: _fake_torch())
     monkeypatch.setattr(serve_vllm_adapter, "_run_nvidia_smi_list", lambda: "GPU 0: Test GPU")
@@ -193,6 +204,11 @@ def test_cuda_preflight_fails_when_vllm_native_import_fails(monkeypatch: pytest.
     assert "vLLM native import: import vllm._C failed: ImportError: libcudart.so.13" in message
     assert "reason: vLLM native extension import failed" in message
     assert "Fix the NVIDIA driver first" in message
+    assert (
+        "pip uninstall -y vllm torch torchvision torchaudio cuda-toolkit cuda-bindings cuda-python"
+        in message
+    )
+    assert "nvidia-*" not in message
     assert "uv pip install vllm==0.6.6.post1 --torch-backend=cu121" in message
 
 
@@ -222,6 +238,11 @@ def test_cuda_preflight_fails_when_cuda_is_unavailable(monkeypatch: pytest.Monke
     assert "libcudart.so.13" in message
     assert "Recommended repair order" in message
     assert "Fix or reload the NVIDIA driver until `nvidia-smi` works" in message
+    assert (
+        "pip uninstall -y vllm torch torchvision torchaudio cuda-toolkit cuda-bindings cuda-python"
+        in message
+    )
+    assert "nvidia-*" not in message
 
 
 def test_cuda_preflight_fails_when_torch_import_raises(monkeypatch: pytest.MonkeyPatch) -> None:
