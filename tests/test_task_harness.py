@@ -70,3 +70,58 @@ def test_task_accepts_absolute_edit_path_inside_work_dir(tmp_path: Path) -> None
     )
 
     assert result.functionality == 1.0
+
+
+class _CommandBackend(ModelBackend):
+    def __init__(self, commands: list[list[str]]) -> None:
+        self.commands = commands
+
+    def propose_actions(self, instruction: str, work_dir: Path) -> AgentAction:
+        return AgentAction(decision_trace="try command", edits={}, commands=self.commands)
+
+
+def test_task_records_denied_command(tmp_path: Path) -> None:
+    result = run_task("tasks/replace_token.yaml", _CommandBackend([["sh", "-c", "echo denied"]]), tmp_path, timeout_s=10)
+
+    assert result.events[0]["type"] == "command_denied"
+    assert result.events[0]["argv"] == ["sh", "-c", "echo denied"]
+
+
+def test_task_missing_fixture_fails_clearly(tmp_path: Path) -> None:
+    task_path = tmp_path / "missing_fixture.yaml"
+    task_path.write_text(
+        """
+fixture_dir: does_not_exist
+checks: []
+""",
+        encoding="utf-8",
+    )
+
+    try:
+        run_task(task_path, MockBackend(), tmp_path / "run", timeout_s=10)
+    except FileNotFoundError as exc:
+        assert "Fixture not found" in str(exc)
+    else:
+        raise AssertionError("missing fixture should fail")
+
+
+def test_task_snapshot_handles_binary_file(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "blob.bin").write_bytes(b"\xff\x00\xfe")
+    task_path = tmp_path / "binary_task.yaml"
+    task_path.write_text(
+        f"""
+fixture_dir: {fixture}
+checks:
+  - type: file_contains
+    path: blob.bin
+    text: anything
+""",
+        encoding="utf-8",
+    )
+
+    result = run_task(task_path, _CommandBackend([]), tmp_path / "run", timeout_s=10)
+
+    assert result.file_snapshots["blob.bin"]["excerpt"] == "(binary file omitted)"
+    assert result.file_snapshots["blob.bin"]["sha256"]

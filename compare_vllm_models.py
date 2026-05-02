@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from agent_harness.backends import make_backend
 from agent_harness.task import run_task
+from interpretability.artifacts import read_json, write_json, write_text
 from interpretability.config import (
     experiment_config,
     load_yaml,
@@ -22,6 +23,7 @@ from interpretability.config import (
     resources_config,
     scoring_config,
 )
+from interpretability.experiment import score_result_payload, write_score
 from interpretability.scoring import ScoreResult, score_run
 
 
@@ -232,17 +234,14 @@ def run_model_task(
 ) -> ScoreResult:
     run_dir.mkdir(parents=True, exist_ok=True)
     result = run_task(task_path, make_backend(model_cfg), run_dir, timeout_s)
-    (run_dir / "metrics.json").write_text(
-        json.dumps({"functionality": result.functionality}, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    (run_dir / "config.json").write_text(json.dumps({"model": model_cfg}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json(run_dir / "metrics.json", {"functionality": result.functionality}, sort_keys=False)
+    write_json(run_dir / "config.json", {"model": model_cfg})
     if baseline_functionality is None:
         score = score_run(run_dir, metrics_config, result.functionality, floor_ratio, incumbent_explainability=-1.0)
         score = ScoreResult(score.functionality, score.explainability, True, "baseline", score.details)
     else:
         score = score_run(run_dir, metrics_config, baseline_functionality, floor_ratio, incumbent_explainability=-1.0)
-    (run_dir / "score.json").write_text(json.dumps(asdict(score), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_score(run_dir, score)
     return score
 
 
@@ -271,8 +270,8 @@ def build_summary(
 
 
 def write_reports(run_dir: Path, summary: dict[str, Any]) -> None:
-    (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (run_dir / "report.md").write_text(render_markdown_report(summary), encoding="utf-8")
+    write_json(run_dir / "summary.json", summary)
+    write_text(run_dir / "report.md", render_markdown_report(summary))
 
 
 def render_markdown_report(summary: dict[str, Any]) -> str:
@@ -342,11 +341,7 @@ def _task_name(task_path: str) -> str:
 
 def _score_payload(score: ScoreResult, run_dir: Path) -> dict[str, Any]:
     return {
-        "functionality": score.functionality,
-        "explainability": score.explainability,
-        "accepted": score.accepted,
-        "reason": score.reason,
-        "details": score.details,
+        **score_result_payload(score),
         "check_diagnostics": _read_json(run_dir / "check_diagnostics.json", []),
         "file_snapshots": _read_json(run_dir / "final_file_snapshots.json", {}),
         "raw_response_valid": _raw_response_valid(run_dir),
@@ -356,9 +351,7 @@ def _score_payload(score: ScoreResult, run_dir: Path) -> dict[str, Any]:
 
 
 def _read_json(path: Path, default: Any) -> Any:
-    if not path.exists():
-        return default
-    return json.loads(path.read_text(encoding="utf-8"))
+    return read_json(path, default)
 
 
 def _raw_response_valid(run_dir: Path) -> bool | None:

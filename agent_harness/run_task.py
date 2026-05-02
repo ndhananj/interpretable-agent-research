@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
 
 from agent_harness.backends import make_backend
 from agent_harness.task import run_task
+from interpretability.artifacts import write_json
 from interpretability.config import load_yaml
 
 
@@ -28,7 +29,7 @@ def main() -> None:
     timeout_s = int(config.get("resources", {}).get("task_timeout_s", 45))
     result = run_task(args.task, backend, run_dir, timeout_s)
     metrics = {"functionality": result.functionality}
-    (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+    write_json(run_dir / "metrics.json", metrics, sort_keys=False)
     print(json.dumps(metrics, indent=2))
 
 

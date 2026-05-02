@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from interpretability.artifacts import read_json, read_jsonl
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,7 @@ def score_run(
     incumbent_explainability: float = 0.0,
 ) -> ScoreResult:
     run_path = Path(run_dir)
-    metrics = _read_json(run_path / "metrics.json")
+    metrics = read_json(run_path / "metrics.json")
     functionality = float(metrics.get("functionality", 0.0))
     floor = baseline_functionality * floor_ratio
     details = explainability_details(
@@ -50,8 +51,8 @@ def explainability_details(
     behavior_cfg = metrics_config.get("behavior", {})
     mech_cfg = metrics_config.get("mechanistic", {})
     trace = trace_path.read_text(encoding="utf-8") if trace_path.exists() else ""
-    log_events = _read_jsonl(tool_log_path)
-    mechanistic = _read_json(mechanistic_path) if mechanistic_path.exists() else {}
+    log_events = read_jsonl(tool_log_path)
+    mechanistic = read_json(mechanistic_path) if mechanistic_path.exists() else {}
 
     faithfulness = _faithfulness(trace, log_events, behavior_cfg)
     concision = _concision(trace, int(behavior_cfg.get("max_trace_words", 180)))
@@ -104,17 +105,8 @@ def _tool_log_alignment(trace: str, events: list[dict[str, Any]]) -> float:
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return read_json(path)
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    events = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            events.append(json.loads(line))
-    return events
-
+    return read_jsonl(path)

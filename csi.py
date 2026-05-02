@@ -13,11 +13,14 @@ from pathlib import Path
 from typing import Any
 
 from agent_harness.backends import ModelBackend, make_backend
-from interpretability.config import experiment_config, load_yaml, model_config, resources_config, scoring_config
+from interpretability.artifacts import payload, read_json as artifact_read_json, write_json
+from interpretability.config import experiment_config, load_yaml, model_config, resources_config
 from interpretability.experiment import (
     ExperimentContext,
     TrialRecord,
+    experiment_context,
     run_baseline_cycle,
+    score_result_payload,
     run_trial_cycle,
     write_summary,
 )
@@ -157,25 +160,19 @@ def daemon_iteration(
     resources = resources_config(config)
     snapshot = detect_resources()
     backoff, reason = should_backoff(resources.values, snapshot)
-    state["resource_snapshot"] = snapshot.__dict__
+    resource_payload = payload(snapshot)
+    state["resource_snapshot"] = resource_payload
     if backoff:
         state.update({"status": "backoff", "backoff_reason": reason, "updated_at": now()})
         update_state(csi_dir, state)
-        append_event(csi_dir, "backoff", {"reason": reason, "resources": snapshot.__dict__})
+        append_event(csi_dir, "backoff", {"reason": reason, "resources": resource_payload})
         return False
 
-    experiment = experiment_config(config)
-    scoring = scoring_config(config)
-    context = ExperimentContext(
-        config=config,
-        run_root=run_root,
+    context = experiment_context(
+        config,
         backend=backend or make_backend(model_config(config)),
-        metrics_config=metrics_config or load_yaml(scoring.metrics_config),
-        task_paths=scoring.task_paths,
-        floor_ratio=experiment.functionality_floor_ratio,
-        baseline_functionality=experiment.baseline_functionality,
-        task_timeout_s=resources.task_timeout_s,
-        trials=experiment.trials,
+        run_root=run_root,
+        metrics_config=metrics_config,
     )
     baseline = state.get("baseline_functionality") or context.baseline_functionality
     if baseline is None:
@@ -197,7 +194,7 @@ def daemon_iteration(
     append_event(csi_dir, "trial_scored", score_payload(result, run_dir, trial_number))
     accepted = list(state.get("accepted", []))
     if result.accepted:
-        accepted.append(result.__dict__)
+        accepted.append(score_result_payload(result))
         state["incumbent_explainability"] = result.explainability
         append_event(csi_dir, "accepted", score_payload(result, run_dir, trial_number))
     else:
@@ -215,7 +212,7 @@ def daemon_iteration(
         }
     )
     update_state(csi_dir, state)
-    write_summary(run_root, baseline, accepted, snapshot.__dict__)
+    write_summary(run_root, baseline, accepted, resource_payload)
     return True
 
 
@@ -381,7 +378,7 @@ def update_state(csi_dir: Path, updates: dict[str, Any]) -> None:
     csi_dir.mkdir(parents=True, exist_ok=True)
     state = read_state(csi_dir)
     state.update(updates)
-    (csi_dir / STATE_FILE).write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_json(csi_dir / STATE_FILE, state)
 
 
 def append_event(csi_dir: Path, event: str, payload: dict[str, Any]) -> None:
@@ -395,9 +392,8 @@ def read_events(csi_dir: Path, limit: int = 100) -> list[dict[str, Any]]:
     path = csi_dir / EVENTS_FILE
     if not path.exists():
         return []
-    lines = path.read_text(encoding="utf-8").splitlines()[-limit:]
     events = []
-    for line in lines:
+    for line in path.read_text(encoding="utf-8").splitlines()[-limit:]:
         try:
             events.append(json.loads(line))
         except json.JSONDecodeError:
@@ -407,13 +403,13 @@ def read_events(csi_dir: Path, limit: int = 100) -> list[dict[str, Any]]:
 
 def read_json(path: Path) -> dict[str, Any]:
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return artifact_read_json(path)
     except Exception:
         return {}
 
 
 def score_payload(result: Any, run_dir: Path, trial: int | None = None) -> dict[str, Any]:
-    payload = {"run_dir": str(run_dir), **result.__dict__}
+    payload = {"run_dir": str(run_dir), **score_result_payload(result)}
     if trial is not None:
         payload["trial"] = trial
     return payload

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_harness.backends import BackendError, VLLMOpenAIBackend, make_backend, validate_model_config
+from agent_harness.backends import BackendError, MockBackend, VLLMOpenAIBackend, make_backend, validate_model_config
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -222,6 +222,15 @@ def test_vllm_backend_error_preserves_non_json_raw_response(fake_server: str, tm
 def test_make_backend_creates_vllm_without_network_call() -> None:
     backend = make_backend({"backend": "vllm_openai", "base_url": "http://127.0.0.1:8000"})
     assert isinstance(backend, VLLMOpenAIBackend)
+
+
+def test_make_backend_creates_mock_from_registry() -> None:
+    assert isinstance(make_backend({"backend": "mock"}), MockBackend)
+
+
+def test_invalid_backend_branch_reports_supported_names() -> None:
+    with pytest.raises(NotImplementedError, match="Use 'mock' or 'vllm_openai'"):
+        validate_model_config({"backend": "missing"})
 
 
 def test_make_backend_requires_adapter_path_with_adapter_name() -> None:

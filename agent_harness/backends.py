@@ -6,7 +6,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -266,59 +266,73 @@ def _workspace_snapshot(work_dir: Path, *, max_files: int = 20, max_bytes_per_fi
 
 def validate_model_config(config: dict[str, Any]) -> dict[str, Any]:
     backend = str(config.get("backend", "mock"))
-    if backend == "mock":
-        return {"backend": backend}
-    if backend == "vllm_openai":
-        adapter_name = config.get("adapter_name")
-        adapter_path = config.get("adapter_path")
-        max_tokens = int(config.get("max_tokens", 1024))
-        raw_max_model_len = config.get("max_model_len")
-        max_model_len = int(raw_max_model_len) if raw_max_model_len is not None else None
-        use_response_format = bool(config.get("use_response_format", True))
-        if adapter_name is not None and (not isinstance(adapter_name, str) or not adapter_name.strip()):
-            raise ValueError("model.adapter_name must be a non-empty string when provided")
-        if adapter_name is not None and (not isinstance(adapter_path, str) or not adapter_path.strip()):
-            raise ValueError(
-                "model.adapter_path must be a non-empty string when model.adapter_name is configured"
-            )
-        if adapter_path is not None and (not isinstance(adapter_path, str) or not adapter_path.strip()):
-            raise ValueError("model.adapter_path must be a non-empty string when provided")
-        if max_model_len is not None and max_tokens >= max_model_len:
-            raise ValueError(
-                "model.max_tokens must be less than model.max_model_len because vLLM requires "
-                "prompt_tokens + max_tokens <= max_model_len"
-            )
-        return {
-            "backend": backend,
-            "base_url": str(config.get("base_url", "http://127.0.0.1:8000")),
-            "name": str(config.get("name", "Qwen/Qwen2.5-Coder-1.5B-Instruct")),
-            "adapter_name": adapter_name,
-            "timeout_s": float(config.get("timeout_s", 30)),
-            "temperature": float(config.get("temperature", 0.0)),
-            "max_tokens": max_tokens,
-            "max_model_len": max_model_len,
-            "use_response_format": use_response_format,
-        }
-    raise NotImplementedError(
-        f"Backend {backend!r} is not implemented. Use 'mock' or 'vllm_openai'."
-    )
+    try:
+        return _BACKEND_REGISTRY[backend].validator(config)
+    except KeyError as exc:
+        raise NotImplementedError(f"Backend {backend!r} is not implemented. Use 'mock' or 'vllm_openai'.") from exc
 
 
 def make_backend(config: dict) -> ModelBackend:
     validated = validate_model_config(config)
-    backend = validated["backend"]
-    if backend == "mock":
-        return MockBackend()
-    if backend == "vllm_openai":
-        return VLLMOpenAIBackend(
-            base_url=validated["base_url"],
-            model_name=validated["name"],
-            adapter_name=validated["adapter_name"],
-            timeout_s=validated["timeout_s"],
-            temperature=validated["temperature"],
-            max_tokens=validated["max_tokens"],
-            use_response_format=validated["use_response_format"],
+    return _BACKEND_REGISTRY[validated["backend"]].factory(validated)
+
+
+@dataclass(frozen=True)
+class BackendSpec:
+    validator: Callable[[dict[str, Any]], dict[str, Any]]
+    factory: Callable[[dict[str, Any]], ModelBackend]
+
+
+def _validate_mock(config: dict[str, Any]) -> dict[str, Any]:
+    return {"backend": str(config.get("backend", "mock"))}
+
+
+def _validate_vllm_openai(config: dict[str, Any]) -> dict[str, Any]:
+    adapter_name = config.get("adapter_name")
+    adapter_path = config.get("adapter_path")
+    max_tokens = int(config.get("max_tokens", 1024))
+    raw_max_model_len = config.get("max_model_len")
+    max_model_len = int(raw_max_model_len) if raw_max_model_len is not None else None
+    _validate_optional_nonempty(adapter_name, "model.adapter_name")
+    _validate_optional_nonempty(adapter_path, "model.adapter_path")
+    if adapter_name is not None and adapter_path is None:
+        raise ValueError("model.adapter_path must be a non-empty string when model.adapter_name is configured")
+    if max_model_len is not None and max_tokens >= max_model_len:
+        raise ValueError(
+            "model.max_tokens must be less than model.max_model_len because vLLM requires "
+            "prompt_tokens + max_tokens <= max_model_len"
         )
-    raise NotImplementedError(
-        f"Backend {backend!r} is not implemented. Use 'mock' or 'vllm_openai'."
+    return {
+        "backend": "vllm_openai",
+        "base_url": str(config.get("base_url", "http://127.0.0.1:8000")),
+        "name": str(config.get("name", "Qwen/Qwen2.5-Coder-1.5B-Instruct")),
+        "adapter_name": adapter_name,
+        "timeout_s": float(config.get("timeout_s", 30)),
+        "temperature": float(config.get("temperature", 0.0)),
+        "max_tokens": max_tokens,
+        "max_model_len": max_model_len,
+        "use_response_format": bool(config.get("use_response_format", True)),
+    }
+
+
+def _validate_optional_nonempty(value: Any, label: str) -> None:
+    if value is not None and (not isinstance(value, str) or not value.strip()):
+        raise ValueError(f"{label} must be a non-empty string when provided")
+
+
+def _make_vllm_openai(config: dict[str, Any]) -> ModelBackend:
+    return VLLMOpenAIBackend(
+        base_url=config["base_url"],
+        model_name=config["name"],
+        adapter_name=config["adapter_name"],
+        timeout_s=config["timeout_s"],
+        temperature=config["temperature"],
+        max_tokens=config["max_tokens"],
+        use_response_format=config["use_response_format"],
     )
+
+
+_BACKEND_REGISTRY: dict[str, BackendSpec] = {
+    "mock": BackendSpec(_validate_mock, lambda config: MockBackend()),
+    "vllm_openai": BackendSpec(_validate_vllm_openai, _make_vllm_openai),
+}

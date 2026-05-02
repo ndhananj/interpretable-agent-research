@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import time
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ from typing import Any
 
 from agent_harness.backends import ModelBackend, make_backend
 from agent_harness.task import run_task
+from interpretability.artifacts import payload, write_json
 from interpretability.config import (
     experiment_config,
     load_yaml,
@@ -50,21 +50,33 @@ class ExperimentResult:
 
 def prepare_experiment(config_path: str, backend: ModelBackend | None = None) -> ExperimentContext:
     config = load_yaml(config_path)
-    exp = experiment_config(config)
+    context = experiment_context(config, backend=backend)
     resources = resources_config(config)
-    scoring = scoring_config(config)
 
     configure_conservative_threads(resources.max_cpu_threads)
     backoff, reason = should_backoff(resources.values)
     if backoff:
         raise SystemExit(f"Resource backoff: {reason}")
 
-    exp.run_root.mkdir(parents=True, exist_ok=True)
+    context.run_root.mkdir(parents=True, exist_ok=True)
+    return context
+
+
+def experiment_context(
+    config: dict[str, Any],
+    *,
+    backend: ModelBackend | None = None,
+    run_root: Path | None = None,
+    metrics_config: dict[str, Any] | None = None,
+) -> ExperimentContext:
+    exp = experiment_config(config)
+    resources = resources_config(config)
+    scoring = scoring_config(config)
     return ExperimentContext(
         config=config,
-        run_root=exp.run_root,
+        run_root=run_root or exp.run_root,
         backend=backend or make_backend(model_config(config)),
-        metrics_config=load_yaml(scoring.metrics_config),
+        metrics_config=metrics_config or load_yaml(scoring.metrics_config),
         task_paths=scoring.task_paths,
         floor_ratio=exp.functionality_floor_ratio,
         baseline_functionality=exp.baseline_functionality,
@@ -87,12 +99,12 @@ def run_experiment(config_path: str = "configs/default.yaml", max_trials: int | 
         records.append(record)
         if record.score.accepted:
             incumbent = record.score.explainability
-            accepted.append(record.score.__dict__)
+            accepted.append(score_result_payload(record.score))
 
     summary = ExperimentResult(
         baseline_functionality=baseline,
         accepted=accepted,
-        resources=detect_resources().__dict__,
+        resources=payload(detect_resources()),
         trials=[trial_record_payload(record) for record in records],
     )
     write_legacy_summary(context.run_root, summary)
@@ -146,9 +158,9 @@ def run_trial(
         for task_path in context.task_paths
     ]
     functionality = sum(scores) / max(len(scores), 1)
-    (run_dir / "metrics.json").write_text(json.dumps({"functionality": functionality}, indent=2) + "\n", encoding="utf-8")
-    (run_dir / "config.json").write_text(json.dumps(context.config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    (run_dir / "mechanistic.json").write_text(json.dumps({"sparsity": 0.30, "stability": 0.30}, indent=2) + "\n", encoding="utf-8")
+    write_json(run_dir / "metrics.json", {"functionality": functionality}, sort_keys=False)
+    write_json(run_dir / "config.json", context.config)
+    write_json(run_dir / "mechanistic.json", {"sparsity": 0.30, "stability": 0.30}, sort_keys=False)
     if baseline_functionality is None:
         return ScoreResult(functionality, 0.0, True, "baseline", {}), run_dir
     score = score_run(
@@ -158,8 +170,16 @@ def run_trial(
         context.floor_ratio,
         incumbent_explainability,
     )
-    (run_dir / "score.json").write_text(json.dumps(score.__dict__, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_score(run_dir, score)
     return score, run_dir
+
+
+def score_result_payload(score: ScoreResult) -> dict[str, Any]:
+    return payload(score)
+
+
+def write_score(run_dir: Path, score: ScoreResult) -> None:
+    write_json(run_dir / "score.json", score)
 
 
 def trial_record_payload(record: TrialRecord) -> dict[str, Any]:
@@ -182,9 +202,7 @@ def legacy_summary(result: ExperimentResult) -> dict[str, Any]:
 
 
 def write_legacy_summary(run_root: Path, result: ExperimentResult) -> None:
-    (run_root / "summary.json").write_text(
-        json.dumps(legacy_summary(result), indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write_json(run_root / "summary.json", legacy_summary(result))
 
 
 def write_summary(run_root: Path, baseline: float, accepted: list[dict[str, Any]], resources: dict[str, Any]) -> None:
