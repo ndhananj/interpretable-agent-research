@@ -34,9 +34,11 @@ def run_task(task_path: str | Path, backend: ModelBackend, run_dir: str | Path, 
     action = backend.propose_actions(str(task.get("instruction", "")), work_dir)
     events: list[dict[str, Any]] = []
     for rel_path, content in action.edits.items():
-        target = _safe_path(work_dir, rel_path)
+        normalized_path = _normalize_edit_path(work_dir, rel_path)
+        target = _safe_path(work_dir, normalized_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
-        events.append({"type": "edit", "path": rel_path})
+        events.append({"type": "edit", "path": normalized_path})
 
     allowed = {str(cmd) for cmd in task.get("allowed_commands", [])}
     for command in action.commands:
@@ -88,3 +90,31 @@ def _safe_path(root: Path, rel_path: str) -> Path:
     if root_resolved not in target.parents and target != root_resolved:
         raise ValueError(f"Path escapes work dir: {rel_path}")
     return target
+
+
+def _normalize_edit_path(root: Path, path: str) -> str:
+    raw = Path(path)
+    root_resolved = root.resolve()
+    if raw.is_absolute():
+        raw_resolved = raw.resolve()
+        if root_resolved not in raw_resolved.parents and raw_resolved != root_resolved:
+            raise ValueError(f"Path escapes work dir: {path}")
+        return raw_resolved.relative_to(root_resolved).as_posix()
+
+    raw_posix = raw.as_posix()
+    for prefix in _work_dir_prefixes(root):
+        prefix_posix = prefix.as_posix().rstrip("/")
+        if raw_posix == prefix_posix:
+            return "."
+        if raw_posix.startswith(f"{prefix_posix}/"):
+            return raw_posix[len(prefix_posix) + 1 :]
+    return raw_posix
+
+
+def _work_dir_prefixes(root: Path) -> list[Path]:
+    prefixes = [root, root.resolve()]
+    try:
+        prefixes.append(root.resolve().relative_to(Path.cwd().resolve()))
+    except ValueError:
+        pass
+    return prefixes

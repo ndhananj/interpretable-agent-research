@@ -76,8 +76,9 @@ class VLLMOpenAIBackend(ModelBackend):
                         "You are a coding task agent. Return one JSON object and no other text. "
                         "The JSON object must have exactly these keys: decision_trace, edits, "
                         "and commands. decision_trace must be a non-empty string. edits must map "
-                        "relative file paths to full replacement file contents. commands must be "
-                        "a list of argv arrays. Do not include markdown fences."
+                        "file paths from the Workspace files headers to full replacement file "
+                        "contents. Do not include the working directory in edit paths. commands "
+                        "must be a list of argv arrays. Do not include markdown fences."
                     ),
                 },
                 {
@@ -86,6 +87,8 @@ class VLLMOpenAIBackend(ModelBackend):
                         f"Task instruction:\n{instruction}\n\n"
                         f"Working directory: {work_dir}\n"
                         f"Workspace files:\n{workspace_snapshot}\n\n"
+                        "Use edit paths exactly as shown after each `---` in Workspace files, "
+                        "for example `input.txt`, not the full working directory path.\n"
                         "Produce the next complete action as JSON. Example shape:\n"
                         '{"decision_trace":"...","edits":{"relative/path.txt":"full file contents"},'
                         '"commands":[["python3","-c","..."]]}'
