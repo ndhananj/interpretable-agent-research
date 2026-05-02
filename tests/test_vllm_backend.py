@@ -84,11 +84,13 @@ def fake_server() -> str:
 
 
 def test_vllm_response_becomes_agent_action(fake_server: str, tmp_path: Path) -> None:
+    (tmp_path / "input.txt").write_text("TODO\n", encoding="utf-8")
     backend = VLLMOpenAIBackend(base_url=fake_server, model_name="base", adapter_name="adapter")
 
     action = backend.propose_actions("replace token", tmp_path)
 
     assert _Handler.request_payload["model"] == "adapter"
+    assert "--- input.txt ---\nTODO\n" in _Handler.request_payload["messages"][1]["content"]
     assert action.decision_trace == "edit the file"
     assert action.edits == {"input.txt": "DONE\n"}
     assert action.commands == [["python3", "-c", "print('ok')"]]
@@ -149,6 +151,43 @@ def test_vllm_invalid_model_json_is_rejected(fake_server: str, tmp_path: Path) -
             backend.propose_actions("replace token", tmp_path)
     finally:
         _Handler.response_content = original
+
+
+def test_vllm_accepts_json_wrapped_in_markdown_fence(fake_server: str, tmp_path: Path) -> None:
+    original = _Handler.response_body
+    content = json.dumps(_Handler.response_content)
+    _Handler.response_body = {"choices": [{"message": {"content": f"```json\n{content}\n```"}}]}
+    try:
+        backend = VLLMOpenAIBackend(base_url=fake_server, model_name="base", use_response_format=False)
+        action = backend.propose_actions("replace token", tmp_path)
+    finally:
+        _Handler.response_body = original
+
+    assert action.edits == {"input.txt": "DONE\n"}
+
+
+def test_vllm_accepts_json_after_leading_text(fake_server: str, tmp_path: Path) -> None:
+    original = _Handler.response_body
+    content = json.dumps(_Handler.response_content)
+    _Handler.response_body = {"choices": [{"message": {"content": f"Here is the JSON:\n{content}"}}]}
+    try:
+        backend = VLLMOpenAIBackend(base_url=fake_server, model_name="base", use_response_format=False)
+        action = backend.propose_actions("replace token", tmp_path)
+    finally:
+        _Handler.response_body = original
+
+    assert action.commands == [["python3", "-c", "print('ok')"]]
+
+
+def test_vllm_non_json_error_includes_response_preview(fake_server: str, tmp_path: Path) -> None:
+    original = _Handler.response_body
+    _Handler.response_body = {"choices": [{"message": {"content": "I would edit input.txt."}}]}
+    try:
+        backend = VLLMOpenAIBackend(base_url=fake_server, model_name="base", use_response_format=False)
+        with pytest.raises(BackendError, match="Response preview: 'I would edit input.txt.'"):
+            backend.propose_actions("replace token", tmp_path)
+    finally:
+        _Handler.response_body = original
 
 
 def test_make_backend_creates_vllm_without_network_call() -> None:

@@ -66,16 +66,18 @@ class VLLMOpenAIBackend(ModelBackend):
         self.use_response_format = use_response_format
 
     def propose_actions(self, instruction: str, work_dir: Path) -> AgentAction:
+        workspace_snapshot = _workspace_snapshot(work_dir)
         payload = {
             "model": self.model_name,
             "messages": [
                 {
                     "role": "system",
                     "content": (
-                        "You are a coding task agent. Return only strict JSON with keys "
-                        "decision_trace, edits, and commands. edits must map relative file "
-                        "paths to full replacement file contents. commands must be a list "
-                        "of argv arrays. Do not include markdown fences."
+                        "You are a coding task agent. Return one JSON object and no other text. "
+                        "The JSON object must have exactly these keys: decision_trace, edits, "
+                        "and commands. decision_trace must be a non-empty string. edits must map "
+                        "relative file paths to full replacement file contents. commands must be "
+                        "a list of argv arrays. Do not include markdown fences."
                     ),
                 },
                 {
@@ -83,7 +85,10 @@ class VLLMOpenAIBackend(ModelBackend):
                     "content": (
                         f"Task instruction:\n{instruction}\n\n"
                         f"Working directory: {work_dir}\n"
-                        "Produce the next complete action as JSON."
+                        f"Workspace files:\n{workspace_snapshot}\n\n"
+                        "Produce the next complete action as JSON. Example shape:\n"
+                        '{"decision_trace":"...","edits":{"relative/path.txt":"full file contents"},'
+                        '"commands":[["python3","-c","..."]]}'
                     ),
                 },
             ],
@@ -156,10 +161,12 @@ class VLLMOpenAIBackend(ModelBackend):
 
 
 def _agent_action_from_json(content: str) -> AgentAction:
+    content = _extract_json_object(content)
     try:
         data = json.loads(content)
     except json.JSONDecodeError as exc:
-        raise BackendError("Model response was not strict JSON") from exc
+        preview = _content_preview(content)
+        raise BackendError(f"Model response was not strict JSON. Response preview: {preview}") from exc
     if not isinstance(data, dict):
         raise BackendError("Model response JSON must be an object")
     decision_trace = data.get("decision_trace")
@@ -174,6 +181,54 @@ def _agent_action_from_json(content: str) -> AgentAction:
     ):
         raise BackendError("Model response commands must be a list of string argv arrays")
     return AgentAction(decision_trace=decision_trace, edits=edits, commands=commands)
+
+
+def _extract_json_object(content: str) -> str:
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 3 and lines[-1].strip() == "```":
+            stripped = "\n".join(lines[1:-1]).strip()
+    if stripped.startswith("{"):
+        return stripped
+
+    start = stripped.find("{")
+    if start < 0:
+        return stripped
+    decoder = json.JSONDecoder()
+    try:
+        _, end = decoder.raw_decode(stripped[start:])
+    except json.JSONDecodeError:
+        return stripped
+    return stripped[start : start + end]
+
+
+def _content_preview(content: str, limit: int = 240) -> str:
+    compact = " ".join(content.strip().split())
+    if len(compact) > limit:
+        compact = compact[: limit - 3] + "..."
+    return repr(compact)
+
+
+def _workspace_snapshot(work_dir: Path, *, max_files: int = 20, max_bytes_per_file: int = 4000) -> str:
+    if not work_dir.exists():
+        return "(working directory does not exist)"
+
+    chunks: list[str] = []
+    files = sorted(path for path in work_dir.rglob("*") if path.is_file())
+    for path in files[:max_files]:
+        rel_path = path.relative_to(work_dir).as_posix()
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            chunks.append(f"--- {rel_path} ---\n(binary file omitted)")
+            continue
+        if len(content.encode("utf-8")) > max_bytes_per_file:
+            content = content[:max_bytes_per_file] + "\n...[truncated]"
+        chunks.append(f"--- {rel_path} ---\n{content}")
+    if len(files) > max_files:
+        chunks.append(f"...[{len(files) - max_files} more files omitted]")
+    return "\n\n".join(chunks) if chunks else "(no files)"
 
 
 def validate_model_config(config: dict[str, Any]) -> dict[str, Any]:
