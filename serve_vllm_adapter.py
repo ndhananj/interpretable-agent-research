@@ -201,6 +201,15 @@ def _run_nvidia_smi_list() -> str | None:
     return output or "ok"
 
 
+def _resolve_vllm_executable() -> str:
+    executable = Path(sys.executable)
+    candidates = [executable.parent / "vllm", executable.resolve().parent / "vllm"]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return "vllm"
+
+
 def format_cuda_preflight_error(result: CudaPreflightResult) -> str:
     lines = [
         "vLLM CUDA preflight failed; not starting vllm serve.",
@@ -217,15 +226,20 @@ def format_cuda_preflight_error(result: CudaPreflightResult) -> str:
     lines.extend(
         [
             "",
-            "Suggested keep-driver reinstall path:",
+            "Default keep-driver reinstall path:",
             "  python3 -m venv .venv-vllm",
             "  . .venv-vllm/bin/activate",
             "  pip install -r requirements.txt",
+            "  uv pip install vllm --torch-backend=auto",
+            "",
+            "If reusing an existing vLLM environment, remove incompatible CUDA wheels first:",
             "  pip uninstall -y vllm torch torchvision torchaudio 'nvidia-*'",
             "  uv pip install vllm --torch-backend=auto",
             "",
-            "If uv is unavailable, install a vLLM/PyTorch wheel set whose CUDA runtime is compatible with this driver.",
-            "The alternative is updating the NVIDIA driver to support the installed CUDA runtime.",
+            "Alternate driver-update path:",
+            "  Upgrade the NVIDIA driver to support the installed torch CUDA runtime, then reboot or reload the driver.",
+            "",
+            "Do not use plain `pip install -r requirements-vllm.txt` as the primary GPU fix on this machine.",
             "Use --skip-preflight only when debugging raw vLLM startup behavior.",
         ]
     )
@@ -261,6 +275,7 @@ def main() -> None:
         if not preflight.ok:
             print(format_cuda_preflight_error(preflight), file=sys.stderr)
             raise SystemExit(1)
+    cmd = [_resolve_vllm_executable(), *cmd[1:]]
     raise SystemExit(subprocess.call(cmd))
 
 

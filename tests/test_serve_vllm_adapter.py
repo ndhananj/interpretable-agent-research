@@ -7,7 +7,12 @@ import pytest
 
 from interpretability.config import load_yaml
 import serve_vllm_adapter
-from serve_vllm_adapter import build_vllm_command, format_cuda_preflight_error, run_cuda_preflight
+from serve_vllm_adapter import (
+    _resolve_vllm_executable,
+    build_vllm_command,
+    format_cuda_preflight_error,
+    run_cuda_preflight,
+)
 
 
 class _FakeCuda:
@@ -63,6 +68,18 @@ def test_build_vllm_command_accepts_host_port_overrides() -> None:
     assert cmd[-4:] == ["--host", "0.0.0.0", "--port", "8010"]
 
 
+def test_resolve_vllm_executable_prefers_current_python_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    python = bin_dir / "python"
+    python.write_text("")
+    vllm = bin_dir / "vllm"
+    vllm.write_text("")
+    monkeypatch.setattr(serve_vllm_adapter.sys, "executable", str(python))
+
+    assert _resolve_vllm_executable() == str(vllm)
+
+
 def test_build_vllm_command_rejects_missing_adapter_path() -> None:
     config = load_yaml("configs/vllm.yaml")
     config["model"]["adapter_path"] = ""
@@ -108,6 +125,10 @@ def test_cuda_preflight_fails_when_cuda_is_unavailable(monkeypatch: pytest.Monke
     assert "torch: 2.4.1+cu121" in message
     assert "torch.version.cuda: 12.1" in message
     assert "nvidia-smi -L: failed: driver API mismatch" in message
+    assert "Default keep-driver reinstall path" in message
+    assert "uv pip install vllm --torch-backend=auto" in message
+    assert "Alternate driver-update path" in message
+    assert "Do not use plain `pip install -r requirements-vllm.txt`" in message
 
 
 def test_cuda_preflight_fails_when_torch_import_raises(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -41,8 +41,10 @@ weights.
 
 ### Serve through local vLLM
 
-Install vLLM separately because it is CUDA and platform sensitive. Prefer a
-fresh environment for this optional GPU stack:
+Install vLLM separately because it is CUDA and platform sensitive. On this
+machine, do not treat `requirements-vllm.txt` as the preferred GPU install path;
+it is only a minimal optional marker. Prefer a fresh environment and let `uv`
+choose a vLLM/PyTorch stack that matches the installed NVIDIA driver:
 
 ```bash
 python3 -m venv .venv-vllm
@@ -56,7 +58,8 @@ python serve_vllm_adapter.py --config configs/vllm.yaml
 The current bad state observed on this machine is `torch 2.11.0+cu130` with
 CUDA 13 packages on a CUDA 12.2-era NVIDIA driver. Keeping the driver means
 reinstalling a driver-compatible vLLM/PyTorch wheel set. The other valid fix is
-updating the NVIDIA driver so it supports the installed CUDA runtime.
+updating the NVIDIA driver so it supports the installed CUDA 13 runtime, then
+rebooting or reloading the driver before verification.
 
 In another shell, point the harness at the OpenAI-compatible localhost server:
 
@@ -94,11 +97,14 @@ The default adapter output is `adapters/latest`, matching
 
 3. Install vLLM and serve the adapter:
 
+Default keep-driver path:
+
 ```bash
 python3 -m venv .venv-vllm
 . .venv-vllm/bin/activate
 pip install -r requirements.txt
 uv pip install vllm --torch-backend=auto
+python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"
 python serve_vllm_adapter.py --config configs/vllm.yaml --dry-run
 python serve_vllm_adapter.py --config configs/vllm.yaml
 ```
@@ -115,6 +121,21 @@ by selecting a PyTorch backend from the installed driver. If `uv` is not
 available, use the official vLLM GPU install docs and PyTorch previous-version
 wheel indexes to choose a CUDA runtime compatible with this driver, such as a
 CUDA 12.x wheel set instead of CUDA 13.
+
+On the observed driver version `12020`, latest vLLM may still resolve to CUDA
+12.8, which is too new for this driver. The verified keep-driver fallback is:
+
+```bash
+pip uninstall -y vllm torch torchvision torchaudio cuda-toolkit cuda-bindings cuda-python
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+uv pip install vllm==0.6.6.post1 --torch-backend=cu121
+```
+
+Alternate driver-update path: upgrade the NVIDIA driver to one compatible with
+the currently installed CUDA 13 runtime, reboot or reload the driver, then rerun
+the verification commands above in the existing or rebuilt vLLM environment. If
+`nvidia-smi` cannot communicate with the driver, the setup remains blocked at
+the system-driver layer even if Python packages are corrected.
 
 The helper reads `model.base_url` for the default host and port. Override them
 when needed:
