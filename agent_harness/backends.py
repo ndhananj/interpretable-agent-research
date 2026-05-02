@@ -144,10 +144,10 @@ def _agent_action_from_json(content: str) -> AgentAction:
     return AgentAction(decision_trace=decision_trace, edits=edits, commands=commands)
 
 
-def make_backend(config: dict) -> ModelBackend:
+def validate_model_config(config: dict[str, Any]) -> dict[str, Any]:
     backend = str(config.get("backend", "mock"))
     if backend == "mock":
-        return MockBackend()
+        return {"backend": backend}
     if backend == "vllm_openai":
         adapter_name = config.get("adapter_name")
         adapter_path = config.get("adapter_path")
@@ -159,13 +159,33 @@ def make_backend(config: dict) -> ModelBackend:
             )
         if adapter_path is not None and (not isinstance(adapter_path, str) or not adapter_path.strip()):
             raise ValueError("model.adapter_path must be a non-empty string when provided")
+        return {
+            "backend": backend,
+            "base_url": str(config.get("base_url", "http://127.0.0.1:8000")),
+            "name": str(config.get("name", "Qwen/Qwen2.5-Coder-1.5B-Instruct")),
+            "adapter_name": adapter_name,
+            "timeout_s": float(config.get("timeout_s", 30)),
+            "temperature": float(config.get("temperature", 0.0)),
+            "max_tokens": int(config.get("max_tokens", 1024)),
+        }
+    raise NotImplementedError(
+        f"Backend {backend!r} is not implemented. Use 'mock' or 'vllm_openai'."
+    )
+
+
+def make_backend(config: dict) -> ModelBackend:
+    validated = validate_model_config(config)
+    backend = validated["backend"]
+    if backend == "mock":
+        return MockBackend()
+    if backend == "vllm_openai":
         return VLLMOpenAIBackend(
-            base_url=str(config.get("base_url", "http://127.0.0.1:8000")),
-            model_name=str(config.get("name", "Qwen/Qwen2.5-Coder-1.5B-Instruct")),
-            adapter_name=adapter_name,
-            timeout_s=float(config.get("timeout_s", 30)),
-            temperature=float(config.get("temperature", 0.0)),
-            max_tokens=int(config.get("max_tokens", 1024)),
+            base_url=validated["base_url"],
+            model_name=validated["name"],
+            adapter_name=validated["adapter_name"],
+            timeout_s=validated["timeout_s"],
+            temperature=validated["temperature"],
+            max_tokens=validated["max_tokens"],
         )
     raise NotImplementedError(
         f"Backend {backend!r} is not implemented. Use 'mock' or 'vllm_openai'."

@@ -1,5 +1,5 @@
-# vLLM/PyTorch wheels are CUDA and driver sensitive. Prefer installing this
-# optional stack in a fresh venv with:
+# Deprecated optional marker. Use one active .venv for the project and install
+# vLLM into that environment when GPU serving is needed:
 #
 #   pip install -r requirements.txt
 #   uv pip install vllm --torch-backend=auto

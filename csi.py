@@ -12,10 +12,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from agent_harness.backends import make_backend
-from interpretability.config import load_yaml
+from agent_harness.backends import ModelBackend, make_backend
+from interpretability.config import experiment_config, load_yaml, model_config, resources_config, scoring_config
+from interpretability.experiment import (
+    ExperimentContext,
+    TrialRecord,
+    run_baseline_cycle,
+    run_trial_cycle,
+    write_summary,
+)
 from interpretability.resources import configure_conservative_threads, detect_resources, should_backoff
-from run_experiment import run_baseline_cycle, run_one_trial_cycle
 
 
 CSI_DIRNAME = "csi"
@@ -107,15 +113,15 @@ def print_status(config_path: str) -> None:
 
 def run_daemon(config_path: str, sleep_s: float | None = None, once: bool = False) -> None:
     config = load_yaml(config_path)
-    experiment_cfg = config.get("experiment", {})
-    resources_cfg = config.get("resources", {})
-    configure_conservative_threads(int(resources_cfg.get("max_cpu_threads", 4)))
-    run_root = Path(experiment_cfg.get("run_root", "runs"))
+    experiment = experiment_config(config)
+    resources = resources_config(config)
+    configure_conservative_threads(resources.max_cpu_threads)
+    run_root = experiment.run_root
     run_root.mkdir(parents=True, exist_ok=True)
     csi_dir = run_root / CSI_DIRNAME
     csi_dir.mkdir(parents=True, exist_ok=True)
     write_pid(csi_dir, os.getpid())
-    sleep_s = float(sleep_s if sleep_s is not None else experiment_cfg.get("daemon_sleep_s", 30))
+    sleep_s = float(sleep_s if sleep_s is not None else experiment.daemon_sleep_s)
     state = read_state(csi_dir)
     state.update({"status": "running", "pid": os.getpid(), "config": config_path, "updated_at": now()})
     update_state(csi_dir, state)
@@ -145,12 +151,12 @@ def daemon_iteration(
     csi_dir: Path,
     run_root: Path,
     state: dict[str, Any],
-    backend: Any | None = None,
+    backend: ModelBackend | None = None,
     metrics_config: dict[str, Any] | None = None,
 ) -> bool:
-    resources_cfg = config.get("resources", {})
+    resources = resources_config(config)
     snapshot = detect_resources()
-    backoff, reason = should_backoff(resources_cfg, snapshot)
+    backoff, reason = should_backoff(resources.values, snapshot)
     state["resource_snapshot"] = snapshot.__dict__
     if backoff:
         state.update({"status": "backoff", "backoff_reason": reason, "updated_at": now()})
@@ -158,24 +164,36 @@ def daemon_iteration(
         append_event(csi_dir, "backoff", {"reason": reason, "resources": snapshot.__dict__})
         return False
 
-    task_paths = config.get("scoring", {}).get("task_paths", [])
-    if not task_paths:
-        raise SystemExit("No task_paths configured")
-    backend = backend or make_backend(config.get("model", {}))
-    metrics_config = metrics_config or load_yaml(config.get("scoring", {}).get("metrics_config", "configs/metrics.yaml"))
-    floor_ratio = float(config.get("experiment", {}).get("functionality_floor_ratio", 0.90))
-    baseline = state.get("baseline_functionality") or config.get("experiment", {}).get("baseline_functionality")
+    experiment = experiment_config(config)
+    scoring = scoring_config(config)
+    context = ExperimentContext(
+        config=config,
+        run_root=run_root,
+        backend=backend or make_backend(model_config(config)),
+        metrics_config=metrics_config or load_yaml(scoring.metrics_config),
+        task_paths=scoring.task_paths,
+        floor_ratio=experiment.functionality_floor_ratio,
+        baseline_functionality=experiment.baseline_functionality,
+        task_timeout_s=resources.task_timeout_s,
+        trials=experiment.trials,
+    )
+    baseline = state.get("baseline_functionality") or context.baseline_functionality
     if baseline is None:
         append_event(csi_dir, "baseline_started", {})
-        result, run_dir = run_baseline_cycle(run_root, backend, task_paths, config, metrics_config)
-        baseline = result.functionality
-        state.update({"baseline_functionality": baseline, "latest_run": str(run_dir), "updated_at": now()})
-        append_event(csi_dir, "baseline_scored", score_payload(result, run_dir))
+        record = _as_trial_record("baseline", run_baseline_cycle(context))
+        baseline = record.score.functionality
+        state.update({"baseline_functionality": baseline, "latest_run": str(record.run_dir), "updated_at": now()})
+        append_event(csi_dir, "baseline_scored", score_payload(record.score, record.run_dir))
 
     trial_number = int(state.get("total_trials", 0)) + 1
     incumbent = float(state.get("incumbent_explainability", 0.0))
     append_event(csi_dir, "trial_started", {"trial": trial_number})
-    result, run_dir = run_one_trial_cycle(run_root, backend, task_paths, config, metrics_config, baseline, incumbent, trial_number, floor_ratio)
+    record = _as_trial_record(
+        f"trial-{trial_number}",
+        run_one_trial_cycle(context, baseline, incumbent, trial_number),
+    )
+    result = record.score
+    run_dir = record.run_dir
     append_event(csi_dir, "trial_scored", score_payload(result, run_dir, trial_number))
     accepted = list(state.get("accepted", []))
     if result.accepted:
@@ -199,6 +217,22 @@ def daemon_iteration(
     update_state(csi_dir, state)
     write_summary(run_root, baseline, accepted, snapshot.__dict__)
     return True
+
+
+def run_one_trial_cycle(
+    context: ExperimentContext,
+    baseline_functionality: float,
+    incumbent_explainability: float,
+    trial_number: int,
+) -> TrialRecord:
+    return run_trial_cycle(context, baseline_functionality, incumbent_explainability, trial_number)
+
+
+def _as_trial_record(label: str, result: Any) -> TrialRecord:
+    if isinstance(result, TrialRecord):
+        return result
+    score, run_dir = result
+    return TrialRecord(label, run_dir, score)
 
 
 def serve_dashboard(config_path: str, host: str, port: int) -> None:
@@ -376,11 +410,6 @@ def read_json(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
-
-
-def write_summary(run_root: Path, baseline: float, accepted: list[dict[str, Any]], resources: dict[str, Any]) -> None:
-    summary = {"baseline_functionality": baseline, "accepted": accepted, "resources": resources}
-    (run_root / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
 def score_payload(result: Any, run_dir: Path, trial: int | None = None) -> dict[str, Any]:

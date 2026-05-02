@@ -58,24 +58,11 @@ def build_vllm_command(
     port: int | None = None,
     require_adapter_path_exists: bool = True,
 ) -> list[str]:
-    model = config.get("model")
-    if not isinstance(model, dict):
-        raise SystemExit("Config must include a model mapping")
-    if model.get("backend") != "vllm_openai":
-        raise SystemExit("model.backend must be vllm_openai")
-
-    base_model = model.get("name")
-    adapter_name = model.get("adapter_name")
-    adapter_path = model.get("adapter_path")
-    base_url = model.get("base_url")
-    if not isinstance(base_model, str) or not base_model.strip():
-        raise SystemExit("model.name must be a non-empty base model name")
-    if not isinstance(adapter_name, str) or not adapter_name.strip():
-        raise SystemExit("model.adapter_name must be a non-empty LoRA module name")
-    if not isinstance(adapter_path, str) or not adapter_path.strip():
-        raise SystemExit("model.adapter_path must be a non-empty path to a LoRA adapter")
-    if not isinstance(base_url, str) or not base_url.strip():
-        raise SystemExit("model.base_url must be a non-empty URL")
+    model = validate_vllm_model_config(config)
+    base_model = model["name"]
+    adapter_name = model["adapter_name"]
+    adapter_path = model["adapter_path"]
+    base_url = model["base_url"]
 
     default_host, default_port = _host_port_from_base_url(base_url)
     serve_host = host or default_host
@@ -99,6 +86,27 @@ def build_vllm_command(
         "--port",
         str(serve_port),
     ]
+
+
+def validate_vllm_model_config(config: dict[str, Any]) -> dict[str, str]:
+    model = config.get("model")
+    if not isinstance(model, dict):
+        raise SystemExit("Config must include a model mapping")
+    required = (
+        ("name", "model.name must be a non-empty base model name"),
+        ("adapter_name", "model.adapter_name must be a non-empty LoRA module name"),
+        ("adapter_path", "model.adapter_path must be a non-empty path to a LoRA adapter"),
+        ("base_url", "model.base_url must be a non-empty URL"),
+    )
+    if model.get("backend") != "vllm_openai":
+        raise SystemExit("model.backend must be vllm_openai")
+    values: dict[str, str] = {}
+    for key, message in required:
+        value = model.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise SystemExit(message)
+        values[key] = value
+    return values
 
 
 def _resolve_adapter_path(adapter_path: str) -> Path:

@@ -41,14 +41,14 @@ weights.
 
 ### Serve through local vLLM
 
-Install vLLM separately because it is CUDA and platform sensitive. On this
-machine, do not treat `requirements-vllm.txt` as the preferred GPU install path;
-it is only a minimal optional marker. Prefer a fresh environment and let `uv`
-choose a vLLM/PyTorch stack that matches the installed NVIDIA driver:
+Install vLLM into the same active `.venv` because it is CUDA and platform
+sensitive. Do not treat `requirements-vllm.txt` as a second environment recipe;
+it is only a deprecated optional marker. Let `uv` choose a vLLM/PyTorch stack
+that matches the installed NVIDIA driver:
 
 ```bash
-python3 -m venv .venv-vllm
-. .venv-vllm/bin/activate
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 uv pip install vllm --torch-backend=auto
 python serve_vllm_adapter.py --config configs/vllm.yaml --dry-run
@@ -104,13 +104,13 @@ python train_adapter.py --config configs/adapter.yaml
 The default adapter output is `adapters/latest`, matching
 `configs/vllm.yaml`.
 
-3. Install vLLM and serve the adapter:
+3. Install vLLM in the same active `.venv` and serve the adapter:
 
 Default keep-driver path:
 
 ```bash
-python3 -m venv .venv-vllm
-. .venv-vllm/bin/activate
+python3 -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 uv pip install vllm --torch-backend=auto
 python -c "import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())"

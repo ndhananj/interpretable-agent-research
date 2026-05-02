@@ -67,17 +67,19 @@ def run_task(task_path: str | Path, backend: ModelBackend, run_dir: str | Path, 
 def _score_checks(work_dir: Path, checks: list[dict[str, Any]], max_score: float) -> float:
     if not checks:
         return 0.0
-    passed = 0
-    for check in checks:
-        target = _safe_path(work_dir, str(check["path"]))
-        text = target.read_text(encoding="utf-8") if target.exists() else ""
-        if check["type"] == "file_contains" and str(check["text"]) in text:
-            passed += 1
-        elif check["type"] == "file_not_contains" and str(check["text"]) not in text:
-            passed += 1
-        else:
-            pass
+    passed = sum(1 for check in checks if _check_passed(work_dir, check))
     return max_score * passed / len(checks)
+
+
+def _check_passed(work_dir: Path, check: dict[str, Any]) -> bool:
+    target = _safe_path(work_dir, str(check["path"]))
+    text = target.read_text(encoding="utf-8") if target.exists() else ""
+    expected = str(check["text"])
+    check_type = check["type"]
+    return (
+        (check_type == "file_contains" and expected in text)
+        or (check_type == "file_not_contains" and expected not in text)
+    )
 
 
 def _safe_path(root: Path, rel_path: str) -> Path:
@@ -86,4 +88,3 @@ def _safe_path(root: Path, rel_path: str) -> Path:
     if root_resolved not in target.parents and target != root_resolved:
         raise ValueError(f"Path escapes work dir: {rel_path}")
     return target
-
