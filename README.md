@@ -41,13 +41,22 @@ weights.
 
 ### Serve through local vLLM
 
-Install vLLM separately because it is CUDA and platform sensitive:
+Install vLLM separately because it is CUDA and platform sensitive. Prefer a
+fresh environment for this optional GPU stack:
 
 ```bash
-pip install -r requirements-vllm.txt
+python3 -m venv .venv-vllm
+. .venv-vllm/bin/activate
+pip install -r requirements.txt
+uv pip install vllm --torch-backend=auto
 python serve_vllm_adapter.py --config configs/vllm.yaml --dry-run
 python serve_vllm_adapter.py --config configs/vllm.yaml
 ```
+
+The current bad state observed on this machine is `torch 2.11.0+cu130` with
+CUDA 13 packages on a CUDA 12.2-era NVIDIA driver. Keeping the driver means
+reinstalling a driver-compatible vLLM/PyTorch wheel set. The other valid fix is
+updating the NVIDIA driver so it supports the installed CUDA runtime.
 
 In another shell, point the harness at the OpenAI-compatible localhost server:
 
@@ -86,10 +95,26 @@ The default adapter output is `adapters/latest`, matching
 3. Install vLLM and serve the adapter:
 
 ```bash
-pip install -r requirements-vllm.txt
+python3 -m venv .venv-vllm
+. .venv-vllm/bin/activate
+pip install -r requirements.txt
+uv pip install vllm --torch-backend=auto
 python serve_vllm_adapter.py --config configs/vllm.yaml --dry-run
 python serve_vllm_adapter.py --config configs/vllm.yaml
 ```
+
+If this environment already contains the CUDA 13 stack, remove it first:
+
+```bash
+pip uninstall -y vllm torch torchvision torchaudio 'nvidia-*'
+uv pip install vllm --torch-backend=auto
+```
+
+`uv pip install vllm --torch-backend=auto` follows vLLM's GPU install guidance
+by selecting a PyTorch backend from the installed driver. If `uv` is not
+available, use the official vLLM GPU install docs and PyTorch previous-version
+wheel indexes to choose a CUDA runtime compatible with this driver, such as a
+CUDA 12.x wheel set instead of CUDA 13.
 
 The helper reads `model.base_url` for the default host and port. Override them
 when needed:
@@ -127,7 +152,12 @@ Common failure modes:
   make `model.base_url` match the vLLM host and port.
 - `The model ... does not exist`: confirm `model.adapter_name` matches the
   module name in the helper dry-run command.
-- CUDA or package import failures: install `requirements-vllm.txt` in the active
+- `vLLM CUDA preflight failed`: the helper found a PyTorch/CUDA/driver mismatch
+  before starting vLLM. The known bad local combination is `torch 2.11.0+cu130`
+  / CUDA 13 packages on a CUDA 12.2-era driver. Reinstall a driver-compatible
+  vLLM/PyTorch stack, or update the NVIDIA driver. Use `--skip-preflight` only
+  when you need the raw vLLM startup error for debugging.
+- CUDA or package import failures: install the optional vLLM stack in the active
   environment and run on a CUDA-capable machine supported by vLLM.
 
 ## Hardware Policy

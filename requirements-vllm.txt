@@ -1,1 +1,11 @@
+# vLLM/PyTorch wheels are CUDA and driver sensitive. Prefer installing this
+# optional stack in a fresh venv with:
+#
+#   pip install -r requirements.txt
+#   uv pip install vllm --torch-backend=auto
+#
+# If using pip directly, choose a vLLM/PyTorch wheel set whose CUDA runtime is
+# compatible with the installed NVIDIA driver. Do not reinstall the observed
+# bad stack on this machine: torch 2.11.0+cu130 / CUDA 13 packages against a
+# CUDA 12.2-era driver.
 vllm
