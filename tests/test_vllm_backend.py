@@ -19,10 +19,28 @@ class _Handler(BaseHTTPRequestHandler):
         "commands": [["python3", "-c", "print('ok')"]],
     }
     request_payload = {}
+    request_payloads = []
+    fail_response_format_once = False
 
     def do_POST(self) -> None:  # noqa: N802
         body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
         self.__class__.request_payload = json.loads(body)
+        self.__class__.request_payloads.append(self.__class__.request_payload)
+        if self.__class__.fail_response_format_once and "response_format" in self.__class__.request_payload:
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "error": {
+                            "message": "response_format json_object is not supported by this model",
+                            "type": "InternalServerError",
+                        }
+                    }
+                ).encode("utf-8")
+            )
+            return
         self.send_response(self.response_status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -47,6 +65,9 @@ class _Handler(BaseHTTPRequestHandler):
 def fake_server() -> str:
     _Handler.response_status = 200
     _Handler.response_body = None
+    _Handler.request_payload = {}
+    _Handler.request_payloads = []
+    _Handler.fail_response_format_once = False
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -57,6 +78,9 @@ def fake_server() -> str:
         server.server_close()
         _Handler.response_status = 200
         _Handler.response_body = None
+        _Handler.request_payload = {}
+        _Handler.request_payloads = []
+        _Handler.fail_response_format_once = False
 
 
 def test_vllm_response_becomes_agent_action(fake_server: str, tmp_path: Path) -> None:
@@ -68,6 +92,27 @@ def test_vllm_response_becomes_agent_action(fake_server: str, tmp_path: Path) ->
     assert action.decision_trace == "edit the file"
     assert action.edits == {"input.txt": "DONE\n"}
     assert action.commands == [["python3", "-c", "print('ok')"]]
+
+
+def test_vllm_retries_without_response_format_when_json_mode_fails(fake_server: str, tmp_path: Path) -> None:
+    _Handler.fail_response_format_once = True
+    backend = VLLMOpenAIBackend(base_url=fake_server, model_name="base")
+
+    action = backend.propose_actions("replace token", tmp_path)
+
+    assert action.decision_trace == "edit the file"
+    assert len(_Handler.request_payloads) == 2
+    assert _Handler.request_payloads[0]["response_format"] == {"type": "json_object"}
+    assert "response_format" not in _Handler.request_payloads[1]
+
+
+def test_vllm_can_disable_response_format(fake_server: str, tmp_path: Path) -> None:
+    backend = VLLMOpenAIBackend(base_url=fake_server, model_name="base", use_response_format=False)
+
+    backend.propose_actions("replace token", tmp_path)
+
+    assert len(_Handler.request_payloads) == 1
+    assert "response_format" not in _Handler.request_payload
 
 
 def test_vllm_unreachable_server_raises_clear_error(tmp_path: Path) -> None:

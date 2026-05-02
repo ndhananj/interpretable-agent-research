@@ -56,12 +56,14 @@ class VLLMOpenAIBackend(ModelBackend):
         timeout_s: float = 30.0,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        use_response_format: bool = True,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model_name = adapter_name or model_name
         self.timeout_s = timeout_s
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.use_response_format = use_response_format
 
     def propose_actions(self, instruction: str, work_dir: Path) -> AgentAction:
         payload = {
@@ -87,8 +89,9 @@ class VLLMOpenAIBackend(ModelBackend):
             ],
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
-            "response_format": {"type": "json_object"},
         }
+        if self.use_response_format:
+            payload["response_format"] = {"type": "json_object"}
         data = self._post_chat_completions(payload)
         try:
             content = data["choices"][0]["message"]["content"]
@@ -98,7 +101,12 @@ class VLLMOpenAIBackend(ModelBackend):
             raise BackendError("vLLM response content was not a string")
         return _agent_action_from_json(content)
 
-    def _post_chat_completions(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post_chat_completions(
+        self,
+        payload: dict[str, Any],
+        *,
+        retry_without_response_format: bool = True,
+    ) -> dict[str, Any]:
         request = urllib.request.Request(
             f"{self.base_url}/v1/chat/completions",
             data=json.dumps(payload).encode("utf-8"),
@@ -110,6 +118,21 @@ class VLLMOpenAIBackend(ModelBackend):
                 body = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             error_body = exc.read().decode("utf-8", errors="replace")
+            if retry_without_response_format and "response_format" in payload and exc.code in {400, 500}:
+                fallback_payload = dict(payload)
+                fallback_payload.pop("response_format", None)
+                try:
+                    return self._post_chat_completions(
+                        fallback_payload,
+                        retry_without_response_format=False,
+                    )
+                except BackendError as fallback_exc:
+                    detail = f": {error_body}" if error_body else ""
+                    raise BackendError(
+                        "vLLM OpenAI server rejected /v1/chat/completions "
+                        f"with HTTP {exc.code} {exc.reason}{detail}; retry without "
+                        f"response_format also failed: {fallback_exc}"
+                    ) from exc
             detail = f": {error_body}" if error_body else ""
             raise BackendError(
                 "vLLM OpenAI server rejected /v1/chat/completions "
@@ -161,6 +184,7 @@ def validate_model_config(config: dict[str, Any]) -> dict[str, Any]:
         max_tokens = int(config.get("max_tokens", 1024))
         raw_max_model_len = config.get("max_model_len")
         max_model_len = int(raw_max_model_len) if raw_max_model_len is not None else None
+        use_response_format = bool(config.get("use_response_format", True))
         if adapter_name is not None and (not isinstance(adapter_name, str) or not adapter_name.strip()):
             raise ValueError("model.adapter_name must be a non-empty string when provided")
         if adapter_name is not None and (not isinstance(adapter_path, str) or not adapter_path.strip()):
@@ -183,6 +207,7 @@ def validate_model_config(config: dict[str, Any]) -> dict[str, Any]:
             "temperature": float(config.get("temperature", 0.0)),
             "max_tokens": max_tokens,
             "max_model_len": max_model_len,
+            "use_response_format": use_response_format,
         }
     raise NotImplementedError(
         f"Backend {backend!r} is not implemented. Use 'mock' or 'vllm_openai'."
@@ -202,6 +227,7 @@ def make_backend(config: dict) -> ModelBackend:
             timeout_s=validated["timeout_s"],
             temperature=validated["temperature"],
             max_tokens=validated["max_tokens"],
+            use_response_format=validated["use_response_format"],
         )
     raise NotImplementedError(
         f"Backend {backend!r} is not implemented. Use 'mock' or 'vllm_openai'."
