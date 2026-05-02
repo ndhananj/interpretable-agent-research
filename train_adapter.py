@@ -8,6 +8,12 @@ from typing import Any
 from interpretability.config import load_yaml
 
 
+def _select_training_runtime(torch_module: Any) -> dict[str, Any]:
+    if torch_module.cuda.is_available():
+        return {"model_kwargs": {"device_map": "auto"}, "bf16": False, "fp16": True, "use_cpu": False}
+    return {"model_kwargs": {}, "bf16": False, "fp16": False, "use_cpu": True}
+
+
 def _load_examples(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         raise SystemExit(f"Dataset not found: {path}. Add JSONL training examples before training.")
@@ -75,6 +81,7 @@ def main() -> None:
     try:
         from datasets import Dataset
         from peft import LoraConfig
+        import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
         from trl import SFTConfig, SFTTrainer
     except ImportError as exc:
@@ -82,11 +89,18 @@ def main() -> None:
             "Adapter training requires optional dependencies from requirements.txt. "
             "Run: pip install -r requirements.txt"
         ) from exc
+    runtime = _select_training_runtime(torch)
+    if runtime["use_cpu"]:
+        print("Warning: PyTorch cannot use CUDA; falling back to CPU adapter training.")
     model_name = str(config["model_name"])
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, device_map="auto")
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        trust_remote_code=True,
+        **runtime["model_kwargs"],
+    )
     lora = config["lora"]
     peft_config = LoraConfig(
         r=int(lora.get("r", 8)),
@@ -107,6 +121,9 @@ def main() -> None:
         report_to="none",
         dataset_text_field="text",
         max_length=int(config.get("max_seq_length", 1024)),
+        bf16=runtime["bf16"],
+        fp16=runtime["fp16"],
+        use_cpu=runtime["use_cpu"],
     )
     trainer = SFTTrainer(
         model=model,

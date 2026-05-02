@@ -3,6 +3,30 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+from train_adapter import _select_training_runtime
+
+
+def _fake_torch(cuda_available: bool) -> SimpleNamespace:
+    return SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: cuda_available))
+
+
+def test_select_training_runtime_uses_cpu_when_cuda_unavailable() -> None:
+    runtime = _select_training_runtime(_fake_torch(False))
+
+    assert runtime == {"model_kwargs": {}, "bf16": False, "fp16": False, "use_cpu": True}
+
+
+def test_select_training_runtime_uses_fp16_gpu_when_cuda_available() -> None:
+    runtime = _select_training_runtime(_fake_torch(True))
+
+    assert runtime == {
+        "model_kwargs": {"device_map": "auto"},
+        "bf16": False,
+        "fp16": True,
+        "use_cpu": False,
+    }
 
 
 def test_train_adapter_dry_run_validates_config_and_dataset(tmp_path: Path) -> None:
