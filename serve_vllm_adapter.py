@@ -138,6 +138,17 @@ def validate_vllm_model_config(config: dict[str, Any]) -> dict[str, Any]:
     for key in ("max_model_len", "max_num_batched_tokens", "max_num_seqs"):
         if key in model:
             values[key] = _validate_positive_int(model[key], f"model.{key}")
+    max_model_len = values.get("max_model_len")
+    max_num_batched_tokens = values.get("max_num_batched_tokens")
+    if (
+        max_model_len is not None
+        and max_num_batched_tokens is not None
+        and max_num_batched_tokens < max_model_len
+    ):
+        raise SystemExit(
+            "model.max_num_batched_tokens must be greater than or equal to "
+            "model.max_model_len for vLLM startup"
+        )
     if "gpu_memory_utilization" in model:
         gpu_memory_utilization = model["gpu_memory_utilization"]
         if not isinstance(gpu_memory_utilization, (int, float)) or isinstance(gpu_memory_utilization, bool):

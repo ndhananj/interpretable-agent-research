@@ -58,7 +58,7 @@ def test_build_vllm_command_from_config_dry_run() -> None:
         "--dtype",
         "half",
         "--max-model-len",
-        "4096",
+        "1024",
         "--max-num-batched-tokens",
         "1024",
         "--max-num-seqs",
@@ -127,6 +127,15 @@ def test_build_vllm_command_rejects_invalid_vllm_runtime_options(
     config["model"][key] = value
 
     with pytest.raises(SystemExit, match=message):
+        build_vllm_command(config, config_path="configs/vllm.yaml", require_adapter_path_exists=False)
+
+
+def test_build_vllm_command_rejects_batched_tokens_below_model_len() -> None:
+    config = load_yaml("configs/vllm.yaml")
+    config["model"]["max_model_len"] = 2048
+    config["model"]["max_num_batched_tokens"] = 1024
+
+    with pytest.raises(SystemExit, match="max_num_batched_tokens.*max_model_len"):
         build_vllm_command(config, config_path="configs/vllm.yaml", require_adapter_path_exists=False)
 
 

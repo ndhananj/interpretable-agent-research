@@ -59,7 +59,7 @@ The default vLLM config sets `model.dtype: half` and conservative low-VRAM
 limits for a 6 GiB RTX 2060 class GPU, so the dry run includes:
 
 ```bash
-vllm serve Qwen/Qwen2.5-Coder-1.5B-Instruct --enable-lora --lora-modules interpretable-agent-lora=.../adapters/latest --host 127.0.0.1 --port 8000 --dtype half --max-model-len 4096 --max-num-batched-tokens 1024 --max-num-seqs 1 --gpu-memory-utilization 0.8 --enforce-eager
+vllm serve Qwen/Qwen2.5-Coder-1.5B-Instruct --enable-lora --lora-modules interpretable-agent-lora=.../adapters/latest --host 127.0.0.1 --port 8000 --dtype half --max-model-len 1024 --max-num-batched-tokens 1024 --max-num-seqs 1 --gpu-memory-utilization 0.8 --enforce-eager
 ```
 
 RTX 20xx/Turing GPUs such as the RTX 2060 do not support the model's automatic
@@ -183,8 +183,8 @@ python serve_vllm_adapter.py --config configs/vllm.yaml --dtype half
 For small GPUs, keep `model.max_model_len`, `model.max_num_batched_tokens`,
 `model.max_num_seqs`, `model.gpu_memory_utilization`, and
 `model.enforce_eager` conservative until vLLM starts reliably. Raise
-`max_model_len` later only if the workload needs more context and startup still
-fits in VRAM.
+`max_model_len` and `max_num_batched_tokens` together later only if the workload
+needs more context and startup still fits in VRAM.
 
 4. Validate one task before starting the continuous loop:
 
@@ -225,10 +225,12 @@ Common failure modes:
   `--dtype half` on RTX 20xx/Turing GPUs.
 - vLLM fails during startup profiling or reports insufficient KV cache memory:
   keep the low-VRAM defaults in `configs/vllm.yaml`, especially
-  `model.max_model_len: 4096`, `model.max_num_batched_tokens: 1024`,
+  `model.max_model_len: 1024`, `model.max_num_batched_tokens: 1024`,
   `model.max_num_seqs: 1`, `model.gpu_memory_utilization: 0.80`, and
   `model.enforce_eager: true`. This does not require retraining
-  `adapters/latest`.
+  `adapters/latest`. If you need a longer context later, raise
+  `model.max_num_batched_tokens` with `model.max_model_len`; vLLM rejects
+  `max_num_batched_tokens` values below `max_model_len`.
 - CUDA or package import failures: install the optional vLLM stack in the active
   environment and run on a CUDA-capable machine supported by vLLM.
 

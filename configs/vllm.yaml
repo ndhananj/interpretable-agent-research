@@ -9,7 +9,7 @@ model:
   backend: vllm_openai
   name: Qwen/Qwen2.5-Coder-1.5B-Instruct
   dtype: half
-  max_model_len: 4096
+  max_model_len: 1024
   max_num_batched_tokens: 1024
   max_num_seqs: 1
   gpu_memory_utilization: 0.80
