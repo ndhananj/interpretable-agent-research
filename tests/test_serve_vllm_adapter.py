@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import sys
 
 import pytest
 
@@ -99,14 +100,44 @@ def test_build_vllm_command_rejects_nonexistent_adapter_path_before_launch(tmp_p
 def test_cuda_preflight_passes_when_cuda_device_is_visible(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(serve_vllm_adapter.importlib, "import_module", lambda name: _fake_torch())
     monkeypatch.setattr(serve_vllm_adapter, "_run_nvidia_smi_list", lambda: "GPU 0: Test GPU")
+    monkeypatch.setattr(serve_vllm_adapter, "_get_installed_package_version", lambda package: "0.6.6.post1")
+    monkeypatch.setattr(serve_vllm_adapter, "_run_vllm_native_import", lambda: None)
 
     result = run_cuda_preflight()
 
     assert result.ok is True
+    assert result.python_executable == sys.executable
     assert result.torch_version == "2.4.1+cu121"
     assert result.torch_cuda == "12.1"
     assert result.cuda_available is True
     assert result.device_count == 1
+    assert result.vllm_version == "0.6.6.post1"
+    assert result.vllm_native_import is None
+
+
+def test_cuda_preflight_fails_when_vllm_native_import_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(serve_vllm_adapter.importlib, "import_module", lambda name: _fake_torch())
+    monkeypatch.setattr(serve_vllm_adapter, "_run_nvidia_smi_list", lambda: "GPU 0: Test GPU")
+    monkeypatch.setattr(serve_vllm_adapter, "_get_installed_package_version", lambda package: "0.20.0")
+    monkeypatch.setattr(
+        serve_vllm_adapter,
+        "_run_vllm_native_import",
+        lambda: "import vllm._C failed: ImportError: libcudart.so.13: cannot open shared object file",
+    )
+
+    result = run_cuda_preflight()
+    message = format_cuda_preflight_error(result)
+
+    assert result.ok is False
+    assert "python: " in message
+    assert "torch: 2.4.1+cu121" in message
+    assert "torch.version.cuda: 12.1" in message
+    assert "vLLM: 0.20.0" in message
+    assert "nvidia-smi -L: GPU 0: Test GPU" in message
+    assert "vLLM native import: import vllm._C failed: ImportError: libcudart.so.13" in message
+    assert "reason: vLLM native extension import failed" in message
+    assert "Fix the NVIDIA driver first" in message
+    assert "uv pip install vllm==0.6.6.post1 --torch-backend=cu121" in message
 
 
 def test_cuda_preflight_fails_when_cuda_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,6 +147,12 @@ def test_cuda_preflight_fails_when_cuda_is_unavailable(monkeypatch: pytest.Monke
         lambda name: _fake_torch(available=False, device_count=0),
     )
     monkeypatch.setattr(serve_vllm_adapter, "_run_nvidia_smi_list", lambda: "failed: driver API mismatch")
+    monkeypatch.setattr(serve_vllm_adapter, "_get_installed_package_version", lambda package: "0.20.0")
+    monkeypatch.setattr(
+        serve_vllm_adapter,
+        "_run_vllm_native_import",
+        lambda: "import vllm._C failed: ImportError: libcudart.so.13: cannot open shared object file",
+    )
 
     result = run_cuda_preflight()
     message = format_cuda_preflight_error(result)
@@ -125,10 +162,10 @@ def test_cuda_preflight_fails_when_cuda_is_unavailable(monkeypatch: pytest.Monke
     assert "torch: 2.4.1+cu121" in message
     assert "torch.version.cuda: 12.1" in message
     assert "nvidia-smi -L: failed: driver API mismatch" in message
-    assert "Default keep-driver reinstall path" in message
-    assert "uv pip install vllm --torch-backend=auto" in message
-    assert "Alternate driver-update path" in message
-    assert "Do not use plain `pip install -r requirements-vllm.txt`" in message
+    assert "vLLM: 0.20.0" in message
+    assert "libcudart.so.13" in message
+    assert "Recommended repair order" in message
+    assert "Fix or reload the NVIDIA driver until `nvidia-smi` works" in message
 
 
 def test_cuda_preflight_fails_when_torch_import_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,6 +173,13 @@ def test_cuda_preflight_fails_when_torch_import_raises(monkeypatch: pytest.Monke
         raise ImportError("missing torch")
 
     monkeypatch.setattr(serve_vllm_adapter.importlib, "import_module", _raise_import_error)
+    monkeypatch.setattr(serve_vllm_adapter, "_run_nvidia_smi_list", lambda: "not found")
+    monkeypatch.setattr(serve_vllm_adapter, "_get_installed_package_version", lambda package: "not installed")
+    monkeypatch.setattr(
+        serve_vllm_adapter,
+        "_run_vllm_native_import",
+        lambda: "import vllm._C failed: ModuleNotFoundError: No module named 'vllm'",
+    )
 
     result = run_cuda_preflight()
     message = format_cuda_preflight_error(result)
@@ -143,6 +187,8 @@ def test_cuda_preflight_fails_when_torch_import_raises(monkeypatch: pytest.Monke
     assert result.ok is False
     assert "torch import failed: missing torch" in message
     assert "torch: unknown" in message
+    assert "vLLM: not installed" in message
+    assert "No module named 'vllm'" in message
 
 
 def test_cuda_preflight_fails_when_no_cuda_devices_are_visible(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -152,6 +198,8 @@ def test_cuda_preflight_fails_when_no_cuda_devices_are_visible(monkeypatch: pyte
         lambda name: _fake_torch(available=True, device_count=0),
     )
     monkeypatch.setattr(serve_vllm_adapter, "_run_nvidia_smi_list", lambda: "GPU 0: Test GPU")
+    monkeypatch.setattr(serve_vllm_adapter, "_get_installed_package_version", lambda package: "0.6.6.post1")
+    monkeypatch.setattr(serve_vllm_adapter, "_run_vllm_native_import", lambda: None)
 
     result = run_cuda_preflight()
     message = format_cuda_preflight_error(result)
@@ -159,3 +207,64 @@ def test_cuda_preflight_fails_when_no_cuda_devices_are_visible(monkeypatch: pyte
     assert result.ok is False
     assert "torch reports zero visible CUDA devices" in message
     assert "torch.cuda.device_count(): 0" in message
+
+
+def test_vllm_native_import_summarizes_raw_traceback() -> None:
+    output = """
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ImportError: libcudart.so.13: cannot open shared object file: No such file or directory
+"""
+
+    message = serve_vllm_adapter._summarize_import_failure(output, 1)
+
+    assert message == (
+        "import vllm._C failed: ImportError: "
+        "libcudart.so.13: cannot open shared object file: No such file or directory"
+    )
+
+
+def test_main_dry_run_skips_runtime_preflight(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    def _raise_preflight() -> None:
+        raise AssertionError("preflight should not run during dry-run")
+
+    monkeypatch.setattr(sys, "argv", ["serve_vllm_adapter.py", "--config", "configs/vllm.yaml", "--dry-run"])
+    monkeypatch.setattr(serve_vllm_adapter, "load_yaml", lambda path: {"model": {"backend": "vllm_openai"}})
+    monkeypatch.setattr(
+        serve_vllm_adapter,
+        "build_vllm_command",
+        lambda *args, **kwargs: ["vllm", "serve", "model", "--port", "8000"],
+    )
+    monkeypatch.setattr(serve_vllm_adapter, "run_cuda_preflight", _raise_preflight)
+
+    serve_vllm_adapter.main()
+
+    assert capsys.readouterr().out.strip() == "vllm serve model --port 8000"
+
+
+def test_main_skip_preflight_launches_raw_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def _raise_preflight() -> None:
+        raise AssertionError("preflight should not run with --skip-preflight")
+
+    def _fake_call(cmd: list[str]) -> int:
+        calls.append(cmd)
+        return 7
+
+    monkeypatch.setattr(sys, "argv", ["serve_vllm_adapter.py", "--config", "configs/vllm.yaml", "--skip-preflight"])
+    monkeypatch.setattr(serve_vllm_adapter, "load_yaml", lambda path: {"model": {"backend": "vllm_openai"}})
+    monkeypatch.setattr(
+        serve_vllm_adapter,
+        "build_vllm_command",
+        lambda *args, **kwargs: ["vllm", "serve", "model", "--port", "8000"],
+    )
+    monkeypatch.setattr(serve_vllm_adapter, "run_cuda_preflight", _raise_preflight)
+    monkeypatch.setattr(serve_vllm_adapter, "_resolve_vllm_executable", lambda: "/venv/bin/vllm")
+    monkeypatch.setattr(serve_vllm_adapter.subprocess, "call", _fake_call)
+
+    with pytest.raises(SystemExit) as exc_info:
+        serve_vllm_adapter.main()
+
+    assert exc_info.value.code == 7
+    assert calls == [["/venv/bin/vllm", "serve", "model", "--port", "8000"]]

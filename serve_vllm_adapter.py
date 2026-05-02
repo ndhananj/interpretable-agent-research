@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import importlib.metadata
 import shlex
 import subprocess
 import sys
@@ -17,11 +18,14 @@ from interpretability.config import load_yaml
 @dataclass(frozen=True)
 class CudaPreflightResult:
     ok: bool
+    python_executable: str = "unknown"
     torch_version: str = "unknown"
     torch_cuda: str = "unknown"
     cuda_available: bool = False
     device_count: int | None = None
     nvidia_smi: str | None = None
+    vllm_version: str = "unknown"
+    vllm_native_import: str | None = None
     error: str | None = None
 
 
@@ -93,10 +97,22 @@ def _resolve_adapter_path(adapter_path: str) -> Path:
 
 
 def run_cuda_preflight() -> CudaPreflightResult:
+    python_executable = sys.executable
+    vllm_version = _get_installed_package_version("vllm")
+    nvidia_smi = _run_nvidia_smi_list()
+    vllm_native_import = _run_vllm_native_import()
+
     try:
         torch = importlib.import_module("torch")
     except Exception as exc:
-        return CudaPreflightResult(ok=False, error=f"torch import failed: {exc}")
+        return CudaPreflightResult(
+            ok=False,
+            python_executable=python_executable,
+            nvidia_smi=nvidia_smi,
+            vllm_version=vllm_version,
+            vllm_native_import=vllm_native_import,
+            error=f"torch import failed: {exc}",
+        )
 
     torch_version = str(getattr(torch, "__version__", "unknown"))
     version = getattr(torch, "version", None)
@@ -105,8 +121,12 @@ def run_cuda_preflight() -> CudaPreflightResult:
     if not torch_cuda_value:
         return CudaPreflightResult(
             ok=False,
+            python_executable=python_executable,
             torch_version=torch_version,
             torch_cuda=torch_cuda,
+            nvidia_smi=nvidia_smi,
+            vllm_version=vllm_version,
+            vllm_native_import=vllm_native_import,
             error="installed torch does not include CUDA support",
         )
 
@@ -120,8 +140,12 @@ def run_cuda_preflight() -> CudaPreflightResult:
     except Exception as exc:
         return CudaPreflightResult(
             ok=False,
+            python_executable=python_executable,
             torch_version=torch_version,
             torch_cuda=torch_cuda,
+            nvidia_smi=nvidia_smi,
+            vllm_version=vllm_version,
+            vllm_native_import=vllm_native_import,
             error=f"torch.cuda.is_available() failed: {exc}",
         )
 
@@ -132,54 +156,117 @@ def run_cuda_preflight() -> CudaPreflightResult:
         except Exception as exc:
             return CudaPreflightResult(
                 ok=False,
+                python_executable=python_executable,
                 torch_version=torch_version,
                 torch_cuda=torch_cuda,
                 cuda_available=cuda_available,
+                nvidia_smi=nvidia_smi,
+                vllm_version=vllm_version,
+                vllm_native_import=vllm_native_import,
                 error=f"torch.cuda.device_count() failed: {exc}",
             )
 
-    nvidia_smi = _run_nvidia_smi_list()
     if not cuda_available:
         error = "torch reports CUDA is unavailable"
         if cuda_warning:
             error = f"{error}: {cuda_warning}"
         return CudaPreflightResult(
             ok=False,
+            python_executable=python_executable,
             torch_version=torch_version,
             torch_cuda=torch_cuda,
             cuda_available=False,
             device_count=device_count,
             nvidia_smi=nvidia_smi,
+            vllm_version=vllm_version,
+            vllm_native_import=vllm_native_import,
             error=error,
         )
     if device_count is None or device_count < 1:
         return CudaPreflightResult(
             ok=False,
+            python_executable=python_executable,
             torch_version=torch_version,
             torch_cuda=torch_cuda,
             cuda_available=True,
             device_count=device_count,
             nvidia_smi=nvidia_smi,
+            vllm_version=vllm_version,
+            vllm_native_import=vllm_native_import,
             error="torch reports zero visible CUDA devices",
         )
     if nvidia_smi is not None and nvidia_smi.startswith("failed:"):
         return CudaPreflightResult(
             ok=False,
+            python_executable=python_executable,
             torch_version=torch_version,
             torch_cuda=torch_cuda,
             cuda_available=True,
             device_count=device_count,
             nvidia_smi=nvidia_smi,
+            vllm_version=vllm_version,
+            vllm_native_import=vllm_native_import,
             error="nvidia-smi -L failed",
+        )
+    if vllm_native_import is not None:
+        return CudaPreflightResult(
+            ok=False,
+            python_executable=python_executable,
+            torch_version=torch_version,
+            torch_cuda=torch_cuda,
+            cuda_available=True,
+            device_count=device_count,
+            nvidia_smi=nvidia_smi,
+            vllm_version=vllm_version,
+            vllm_native_import=vllm_native_import,
+            error="vLLM native extension import failed",
         )
     return CudaPreflightResult(
         ok=True,
+        python_executable=python_executable,
         torch_version=torch_version,
         torch_cuda=torch_cuda,
         cuda_available=True,
         device_count=device_count,
         nvidia_smi=nvidia_smi,
+        vllm_version=vllm_version,
     )
+
+
+def _get_installed_package_version(package: str) -> str:
+    try:
+        return importlib.metadata.version(package)
+    except importlib.metadata.PackageNotFoundError:
+        return "not installed"
+    except Exception as exc:
+        return f"unknown ({exc})"
+
+
+def _run_vllm_native_import() -> str | None:
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-c", "import vllm._C"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception as exc:
+        return f"failed to run native import check: {exc}"
+    if completed.returncode == 0:
+        return None
+    output = "\n".join(part.strip() for part in (completed.stderr, completed.stdout) if part and part.strip())
+    return _summarize_import_failure(output, completed.returncode)
+
+
+def _summarize_import_failure(output: str, returncode: int) -> str:
+    if not output:
+        return f"import vllm._C failed with exit code {returncode}"
+    for line in reversed(output.splitlines()):
+        stripped = line.strip()
+        if stripped.startswith(("ImportError:", "ModuleNotFoundError:", "OSError:")):
+            return f"import vllm._C failed: {stripped}"
+    return f"import vllm._C failed: {output.splitlines()[-1].strip()}"
 
 
 def _run_nvidia_smi_list() -> str | None:
@@ -213,33 +300,42 @@ def _resolve_vllm_executable() -> str:
 def format_cuda_preflight_error(result: CudaPreflightResult) -> str:
     lines = [
         "vLLM CUDA preflight failed; not starting vllm serve.",
+        f"python: {result.python_executable}",
         f"torch: {result.torch_version}",
         f"torch.version.cuda: {result.torch_cuda}",
         f"torch.cuda.is_available(): {result.cuda_available}",
+        f"vLLM: {result.vllm_version}",
     ]
     if result.device_count is not None:
         lines.append(f"torch.cuda.device_count(): {result.device_count}")
     if result.nvidia_smi is not None:
         lines.append(f"nvidia-smi -L: {result.nvidia_smi}")
+    if result.vllm_native_import is not None:
+        lines.append(f"vLLM native import: {result.vllm_native_import}")
     if result.error:
         lines.append(f"reason: {result.error}")
+    if result.vllm_native_import and "libcudart.so." in result.vllm_native_import:
+        lines.extend(
+            [
+                "",
+                "The active vLLM extension cannot find the CUDA runtime it was built against.",
+                "Fix the NVIDIA driver first if `nvidia-smi -L` fails, then reinstall a matching vLLM/PyTorch CUDA stack.",
+            ]
+        )
     lines.extend(
         [
             "",
-            "Default keep-driver reinstall path:",
-            "  python3 -m venv .venv-vllm",
-            "  . .venv-vllm/bin/activate",
-            "  pip install -r requirements.txt",
-            "  uv pip install vllm --torch-backend=auto",
+            "Recommended repair order:",
+            "  1. Fix or reload the NVIDIA driver until `nvidia-smi` works.",
+            "  2. Rebuild or repair the active vLLM environment:",
+            "     pip uninstall -y vllm torch torchvision torchaudio 'nvidia-*' cuda-toolkit cuda-bindings cuda-python",
+            "     uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121",
+            "     uv pip install vllm==0.6.6.post1 --torch-backend=cu121",
+            "  3. Verify:",
+            "     python -c \"import torch; print(torch.__version__, torch.version.cuda, torch.cuda.is_available())\"",
+            "     python -c \"import vllm._C\"",
+            "     python serve_vllm_adapter.py --config configs/vllm.yaml",
             "",
-            "If reusing an existing vLLM environment, remove incompatible CUDA wheels first:",
-            "  pip uninstall -y vllm torch torchvision torchaudio 'nvidia-*'",
-            "  uv pip install vllm --torch-backend=auto",
-            "",
-            "Alternate driver-update path:",
-            "  Upgrade the NVIDIA driver to support the installed torch CUDA runtime, then reboot or reload the driver.",
-            "",
-            "Do not use plain `pip install -r requirements-vllm.txt` as the primary GPU fix on this machine.",
             "Use --skip-preflight only when debugging raw vLLM startup behavior.",
         ]
     )
