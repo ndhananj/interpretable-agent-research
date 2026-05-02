@@ -63,6 +63,7 @@ class _FakeProcess:
         self.terminated = False
         self.killed = False
         self.waited = False
+        self.returncode = None
 
     def poll(self) -> None:
         return None
@@ -166,6 +167,10 @@ def test_reports_include_both_models_and_score_details(compare_config: Path, tmp
 
 def test_server_cleanup_runs_on_failure(compare_config: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fake_process = _FakeProcess()
+    config = yaml.safe_load(compare_config.read_text(encoding="utf-8"))
+    config["model"]["base_url"] = "http://127.0.0.1:9"
+    blocked_config = tmp_path / "blocked-vllm.yaml"
+    blocked_config.write_text(yaml.safe_dump(config), encoding="utf-8")
 
     def fake_popen(*args: object, **kwargs: object) -> _FakeProcess:
         return fake_process
@@ -175,11 +180,32 @@ def test_server_cleanup_runs_on_failure(compare_config: Path, tmp_path: Path, mo
 
     with pytest.raises(SystemExit):
         compare_vllm_models.compare_models(
+            config_path=blocked_config,
+            run_dir=tmp_path / "compare",
+            skip_server_start=False,
+            startup_timeout_s=0.1,
+        )
+
+    assert fake_process.terminated
+    assert fake_process.waited
+
+
+def test_starting_server_fails_when_configured_port_is_busy(compare_config: Path, tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="already in use"):
+        compare_vllm_models.compare_models(
             config_path=compare_config,
             run_dir=tmp_path / "compare",
             skip_server_start=False,
             startup_timeout_s=2,
         )
 
-    assert fake_process.terminated
-    assert fake_process.waited
+
+def test_wait_for_health_fails_when_started_process_exits() -> None:
+    class ExitedProcess:
+        returncode = 98
+
+        def poll(self) -> int:
+            return self.returncode
+
+    with pytest.raises(SystemExit, match="exited before becoming healthy with code 98"):
+        compare_vllm_models.wait_for_health("http://127.0.0.1:9", 2, ExitedProcess())  # type: ignore[arg-type]

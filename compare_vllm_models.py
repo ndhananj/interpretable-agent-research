@@ -7,9 +7,11 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import socket
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from agent_harness.backends import make_backend
 from agent_harness.task import run_task
@@ -86,8 +88,9 @@ def compare_models(
     server: subprocess.Popen[str] | None = None
     try:
         if not skip_server_start:
+            ensure_startup_port_available(base_url)
             server = start_server(config_path)
-        wait_for_health(base_url, startup_timeout_s)
+        wait_for_health(base_url, startup_timeout_s, server)
         available_models = fetch_model_ids(base_url)
         missing = [model_id for model_id in (base_model_id, lora_model_id) if model_id not in available_models]
         if missing:
@@ -128,6 +131,22 @@ def start_server(config_path: str | Path) -> subprocess.Popen[str]:
     )
 
 
+def ensure_startup_port_available(base_url: str) -> None:
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        raise SystemExit("model.base_url must be an http(s) URL with a host")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((parsed.hostname, port), timeout=1):
+            pass
+    except OSError:
+        return
+    raise SystemExit(
+        f"Cannot start vLLM because {parsed.hostname}:{port} is already in use. "
+        "Stop the existing server or rerun with --skip-server-start to use it."
+    )
+
+
 def stop_server(server: subprocess.Popen[str]) -> None:
     if server.poll() is not None:
         return
@@ -139,10 +158,12 @@ def stop_server(server: subprocess.Popen[str]) -> None:
         server.wait(timeout=10)
 
 
-def wait_for_health(base_url: str, timeout_s: float) -> None:
+def wait_for_health(base_url: str, timeout_s: float, server: subprocess.Popen[str] | None = None) -> None:
     deadline = time.monotonic() + timeout_s
     last_error: Exception | None = None
     while time.monotonic() < deadline:
+        if server is not None and server.poll() is not None:
+            raise SystemExit(f"vLLM server exited before becoming healthy with code {server.returncode}")
         try:
             with urllib.request.urlopen(f"{base_url}/health", timeout=2) as response:
                 if 200 <= response.status < 300:
