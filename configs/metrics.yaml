@@ -2,8 +2,14 @@ weights:
   behavior_trace_faithfulness: 0.35
   behavior_trace_concision: 0.15
   tool_log_alignment: 0.20
-  mechanistic_sparsity: 0.15
-  mechanistic_stability: 0.15
+  mechanistic_sparsity: 0.00
+  mechanistic_stability: 0.00
+  mechanistic_adapter_locality: 0.05
+  mechanistic_feature_sparsity: 0.05
+  mechanistic_circuit_compactness: 0.05
+  mechanistic_attribution_stability: 0.05
+  mechanistic_pruning_retained_functionality: 0.05
+  mechanistic_replacement_readiness: 0.05
 
 behavior:
   max_trace_words: 180
@@ -14,4 +20,3 @@ behavior:
 
 mechanistic:
   missing_backend_default: 0.30
-

@@ -39,6 +39,8 @@ scoring:
     assert trial.score.functionality == 1.0
     assert "-trial-1-" in trial.run_dir.name
     assert (trial.run_dir / "score.json").exists()
+    assert (trial.run_dir / "mechanistic.json").exists()
+    assert (trial.run_dir / "pruning_mask_spec.json").exists()
 
 
 def test_experiment_context_applies_config_sections(tmp_path: Path) -> None:

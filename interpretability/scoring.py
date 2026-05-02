@@ -57,16 +57,40 @@ def explainability_details(
     faithfulness = _faithfulness(trace, log_events, behavior_cfg)
     concision = _concision(trace, int(behavior_cfg.get("max_trace_words", 180)))
     alignment = _tool_log_alignment(trace, log_events)
-    sparsity = float(mechanistic.get("sparsity", mech_cfg.get("missing_backend_default", 0.30)))
-    stability = float(mechanistic.get("stability", mech_cfg.get("missing_backend_default", 0.30)))
+    scores = mechanistic.get("scores", {}) if isinstance(mechanistic.get("scores", {}), dict) else {}
+    sparsity = _mechanistic_value(mechanistic, scores, "sparsity", "feature_sparsity", mech_cfg)
+    stability = _mechanistic_value(mechanistic, scores, "stability", "attribution_stability", mech_cfg)
 
-    return {
+    details = {
         "behavior_trace_faithfulness": faithfulness * float(weights.get("behavior_trace_faithfulness", 0.0)),
         "behavior_trace_concision": concision * float(weights.get("behavior_trace_concision", 0.0)),
         "tool_log_alignment": alignment * float(weights.get("tool_log_alignment", 0.0)),
         "mechanistic_sparsity": max(0.0, min(1.0, sparsity)) * float(weights.get("mechanistic_sparsity", 0.0)),
         "mechanistic_stability": max(0.0, min(1.0, stability)) * float(weights.get("mechanistic_stability", 0.0)),
     }
+    for key in (
+        "adapter_locality",
+        "feature_sparsity",
+        "circuit_compactness",
+        "attribution_stability",
+        "pruning_retained_functionality",
+        "replacement_readiness",
+    ):
+        value = float(scores.get(key, mech_cfg.get("missing_backend_default", 0.30)))
+        details[f"mechanistic_{key}"] = max(0.0, min(1.0, value)) * float(weights.get(f"mechanistic_{key}", 0.0))
+    return details
+
+
+def _mechanistic_value(
+    mechanistic: dict[str, Any],
+    scores: dict[str, Any],
+    legacy_key: str,
+    score_key: str,
+    cfg: dict[str, Any],
+) -> float:
+    if score_key in scores:
+        return float(scores[score_key])
+    return float(mechanistic.get(legacy_key, cfg.get("missing_backend_default", 0.30)))
 
 
 def _faithfulness(trace: str, events: list[dict[str, Any]], cfg: dict[str, Any]) -> float:

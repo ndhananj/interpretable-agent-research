@@ -24,6 +24,7 @@ from interpretability.config import (
     scoring_config,
 )
 from interpretability.experiment import score_result_payload, write_score
+from interpretability.mechanistic import write_mechanistic_report
 from interpretability.scoring import ScoreResult, score_run
 
 
@@ -236,6 +237,7 @@ def run_model_task(
     result = run_task(task_path, make_backend(model_cfg), run_dir, timeout_s)
     write_json(run_dir / "metrics.json", {"functionality": result.functionality}, sort_keys=False)
     write_json(run_dir / "config.json", {"model": model_cfg})
+    write_mechanistic_report(run_dir, None, model_cfg)
     if baseline_functionality is None:
         score = score_run(run_dir, metrics_config, result.functionality, floor_ratio, incumbent_explainability=-1.0)
         score = ScoreResult(score.functionality, score.explainability, True, "baseline", score.details)

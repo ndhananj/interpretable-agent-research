@@ -1,0 +1,27 @@
+enabled_analyzers:
+  - lora_delta_geometry
+  - activation_sparse_autoencoder
+  - circuit_tracing
+  - transcoder_candidates
+  - sae_assisted_circuit_discovery
+  - weight_sparse_base_model_plan
+  - pruning_masks
+
+sample_prompts:
+  - tasks/replace_token.yaml
+
+budgets:
+  max_prompts: 8
+  max_activation_batches: 0
+  sparse_training_steps: 0
+
+targets:
+  feature_sparsity: 0.80
+  reconstruction_quality: 0.95
+  attribution_stability: 0.75
+  pruning_retained_functionality: 0.90
+  weight_sparsity: 0.50
+
+fallback:
+  missing_backend_default: 0.30
+

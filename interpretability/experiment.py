@@ -18,6 +18,7 @@ from interpretability.config import (
 )
 from interpretability.resources import configure_conservative_threads, detect_resources, should_backoff
 from interpretability.scoring import ScoreResult, score_run
+from interpretability.mechanistic import write_mechanistic_report
 
 
 @dataclass(frozen=True)
@@ -160,7 +161,7 @@ def run_trial(
     functionality = sum(scores) / max(len(scores), 1)
     write_json(run_dir / "metrics.json", {"functionality": functionality}, sort_keys=False)
     write_json(run_dir / "config.json", context.config)
-    write_json(run_dir / "mechanistic.json", {"sparsity": 0.30, "stability": 0.30}, sort_keys=False)
+    write_mechanistic_report(run_dir, context.config, model_config(context.config))
     if baseline_functionality is None:
         return ScoreResult(functionality, 0.0, True, "baseline", {}), run_dir
     score = score_run(

@@ -137,11 +137,27 @@ Outputs are written under the selected run directory:
   explainability, scoring details, acceptance reasons, and run directories.
 - `report.md`: compact base-vs-LoRA table for quick inspection.
 
-Functionality is the task check score. Explainability is currently behavioral:
-it scores the decision trace and tool log alignment, plus configured default
-mechanistic values unless a task run provides `mechanistic.json`. When
-mechanistic instrumentation is added, those `mechanistic.json` values will feed
-the same scoring path.
+Functionality is the task check score. Explainability scores the decision trace,
+tool log alignment, and a mechanistic report written to each task run as
+`mechanistic.json`. The report treats LoRA as a probe and exports base-model
+interpretability proposals: adapter-locality evidence, SAE/circuit/transcoder
+availability records, pruning-mask specs, and sparse-training/distillation
+configs. CPU-safe analyzers run by default; methods that need weights,
+activation capture, or extra backends emit explicit `unavailable` evidence
+instead of silently doing expensive work.
+
+Regenerate a mechanistic report for an existing run without rerunning tasks:
+
+```bash
+python -m interpretability.mechanistic \
+  --config configs/mechanistic.yaml \
+  --run runs/<id>
+```
+
+The intended workflow is: train or evaluate a LoRA adapter, inspect
+`mechanistic.json` and exported base-model modification candidates, then choose
+pruning, sparse training, or transcoder replacement as a later explicit
+experiment surface.
 
 ## Continuous agent with adapted vLLM model
 

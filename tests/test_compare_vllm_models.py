@@ -168,6 +168,8 @@ def test_reports_include_both_models_and_score_details(compare_config: Path, tmp
     assert "Raw JSON" in report
     assert (run_dir / "base" / "replace_token" / "score.json").exists()
     assert (run_dir / "lora" / "replace_token" / "score.json").exists()
+    assert (run_dir / "base" / "replace_token" / "mechanistic.json").exists()
+    assert (run_dir / "lora" / "replace_token" / "mechanistic.json").exists()
 
 
 def test_reports_warn_on_per_check_lora_regression(compare_config: Path, tmp_path: Path) -> None:
