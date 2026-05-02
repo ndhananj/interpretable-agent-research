@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -15,9 +16,13 @@ def _select_training_runtime(torch_module: Any) -> dict[str, Any]:
 
 
 def _load_examples(path: Path) -> list[dict[str, str]]:
+    return [{"text": example["text"]} for example, _line in _load_examples_with_lines(path)]
+
+
+def _load_examples_with_lines(path: Path) -> list[tuple[dict[str, str], int]]:
     if not path.exists():
         raise SystemExit(f"Dataset not found: {path}. Add JSONL training examples before training.")
-    examples: list[dict[str, str]] = []
+    examples: list[tuple[dict[str, str], int]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line_no, line in enumerate(fh, start=1):
             if not line.strip():
@@ -34,7 +39,7 @@ def _load_examples(path: Path) -> list[dict[str, str]]:
                 raise SystemExit(
                     f"Expected prompt/instruction and response/completion strings at {path}:{line_no}"
                 )
-            examples.append({"text": _format_example(prompt, response)})
+            examples.append(({"text": _format_example(prompt, response), "prompt": prompt, "response": response}, line_no))
     if not examples:
         raise SystemExit(f"No training examples found in {path}")
     return examples
@@ -64,6 +69,64 @@ def _validate_config(config: dict[str, Any]) -> None:
         raise SystemExit("Adapter config lora.target_modules must be a list of strings")
 
 
+def _preflight(config: dict[str, Any]) -> dict[str, Any]:
+    dataset_path = Path(config["dataset_path"])
+    examples_with_lines = _load_examples_with_lines(dataset_path)
+    examples = [example for example, _line in examples_with_lines]
+    warnings: list[str] = []
+    if len(examples) < 5:
+        warnings.append(f"tiny dataset: {len(examples)} example(s)")
+    duplicate_lines = _duplicate_lines(examples_with_lines)
+    if duplicate_lines:
+        warnings.append(f"duplicate rows: {duplicate_lines}")
+    if not all(_prompt_matches_harness_shape(example["prompt"]) for example in examples):
+        warnings.append("prompt-shape mismatch: expected real harness workspace snapshot prompts")
+    guardrail_path = config.get("guardrail_dataset_path")
+    guardrail_exists = bool(isinstance(guardrail_path, str) and Path(guardrail_path).exists())
+    if not guardrail_exists:
+        warnings.append("held-out guardrail set missing")
+    token_counts = [len(example["text"].split()) for example in examples]
+    metadata = {
+        "base_model": config["model_name"],
+        "dataset_path": str(dataset_path),
+        "dataset_sha256": _file_sha256(dataset_path),
+        "dataset_size": len(examples),
+        "token_count_words": {
+            "min": min(token_counts),
+            "max": max(token_counts),
+            "avg": sum(token_counts) / len(token_counts),
+        },
+        "lora": config["lora"],
+        "max_steps": int(config.get("max_steps", 20)),
+        "output_dir": str(config["output_dir"]),
+        "guardrail_dataset_path": str(guardrail_path) if guardrail_path else None,
+        "guardrail_dataset_exists": guardrail_exists,
+        "warnings": warnings,
+    }
+    return metadata
+
+
+def _duplicate_lines(examples_with_lines: list[tuple[dict[str, str], int]]) -> list[list[int]]:
+    seen: dict[str, int] = {}
+    duplicates: list[list[int]] = []
+    for example, line_no in examples_with_lines:
+        digest = hashlib.sha256(example["text"].encode("utf-8")).hexdigest()
+        if digest in seen:
+            duplicates.append([seen[digest], line_no])
+        else:
+            seen[digest] = line_no
+    return duplicates
+
+
+def _prompt_matches_harness_shape(prompt: str) -> bool:
+    required = ["Task instruction:", "Working directory:", "Workspace files:", "Produce the next complete action as JSON"]
+    return all(term in prompt for term in required)
+
+
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/adapter.yaml")
@@ -71,8 +134,17 @@ def main() -> None:
     args = parser.parse_args()
     config = load_yaml(args.config)
     _validate_config(config)
+    preflight = _preflight(config)
     examples = _load_examples(Path(config["dataset_path"]))
+    output_dir = Path(config["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "training_preflight.json").write_text(
+        json.dumps(preflight, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     if args.dry_run:
+        for warning in preflight["warnings"]:
+            print(f"Warning: {warning}")
         print(
             f"Adapter dry run for {config['model_name']} -> {config['output_dir']} "
             f"with {len(examples)} examples"
@@ -135,6 +207,13 @@ def main() -> None:
     trainer.train()
     trainer.model.save_pretrained(str(config["output_dir"]))
     tokenizer.save_pretrained(str(config["output_dir"]))
+    history = getattr(trainer.state, "log_history", [])
+    metadata = dict(preflight)
+    metadata["loss_history"] = history
+    (output_dir / "training_metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
     print(f"Saved LoRA adapter to {config['output_dir']}")
 
 

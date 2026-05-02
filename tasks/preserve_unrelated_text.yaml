@@ -1,0 +1,20 @@
+name: preserve_unrelated_text
+description: Replace only the target token while preserving unrelated text.
+fixture_dir: tasks/fixtures/preserve_unrelated_text
+max_score: 1.0
+instruction: Replace TODO with DONE in input.txt while preserving the header and footer exactly.
+allowed_commands:
+  - python3
+checks:
+  - type: file_contains
+    path: input.txt
+    text: header: keep me
+  - type: file_contains
+    path: input.txt
+    text: DONE
+  - type: file_contains
+    path: input.txt
+    text: footer: keep me too
+  - type: file_not_contains
+    path: input.txt
+    text: TODO

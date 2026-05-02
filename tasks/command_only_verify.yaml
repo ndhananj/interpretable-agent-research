@@ -1,0 +1,14 @@
+name: command_only_verify
+description: Verify an already-correct file with an allowed command.
+fixture_dir: tasks/fixtures/command_only_verify
+max_score: 1.0
+instruction: The file is already correct. Run the allowed python3 verification command and leave input.txt unchanged.
+allowed_commands:
+  - python3
+checks:
+  - type: file_contains
+    path: input.txt
+    text: DONE
+  - type: file_not_contains
+    path: input.txt
+    text: TODO

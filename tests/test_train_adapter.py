@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -60,6 +61,10 @@ def test_train_adapter_dry_run_validates_config_and_dataset(tmp_path: Path) -> N
 
     assert proc.returncode == 0, proc.stderr
     assert "with 1 examples" in proc.stdout
+    metadata = json.loads((tmp_path / "adapter" / "training_preflight.json").read_text(encoding="utf-8"))
+    assert metadata["dataset_size"] == 1
+    assert "tiny dataset: 1 example(s)" in metadata["warnings"]
+    assert "prompt-shape mismatch: expected real harness workspace snapshot prompts" in metadata["warnings"]
 
 
 def test_train_adapter_dry_run_rejects_missing_dataset(tmp_path: Path) -> None:
@@ -88,3 +93,41 @@ def test_train_adapter_dry_run_rejects_missing_dataset(tmp_path: Path) -> None:
 
     assert proc.returncode != 0
     assert "Dataset not found" in proc.stderr
+
+
+def test_train_adapter_preflight_detects_harness_prompt_shape(tmp_path: Path) -> None:
+    dataset = tmp_path / "examples.jsonl"
+    dataset.write_text(
+        '{"prompt":"Task instruction:\\nDo it.\\n\\nWorking directory: /tmp/work\\nWorkspace files:\\n--- input.txt ---\\nTODO\\n\\nProduce the next complete action as JSON","response":"{}"}\n',
+        encoding="utf-8",
+    )
+    guardrail = tmp_path / "guardrail.jsonl"
+    guardrail.write_text(dataset.read_text(encoding="utf-8"), encoding="utf-8")
+    config = tmp_path / "adapter.yaml"
+    config.write_text(
+        "\n".join(
+            [
+                "model_name: base",
+                f"output_dir: {tmp_path / 'adapter'}",
+                f"dataset_path: {dataset}",
+                f"guardrail_dataset_path: {guardrail}",
+                "lora:",
+                "  target_modules:",
+                "    - q_proj",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    proc = subprocess.run(
+        [sys.executable, "train_adapter.py", "--config", str(config), "--dry-run"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert proc.returncode == 0, proc.stderr
+    metadata = json.loads((tmp_path / "adapter" / "training_preflight.json").read_text(encoding="utf-8"))
+    assert "prompt-shape mismatch: expected real harness workspace snapshot prompts" not in metadata["warnings"]
+    assert metadata["guardrail_dataset_exists"] is True

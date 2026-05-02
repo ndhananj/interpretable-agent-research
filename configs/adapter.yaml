@@ -1,6 +1,7 @@
 model_name: Qwen/Qwen2.5-Coder-1.5B-Instruct
 output_dir: adapters/latest
 dataset_path: data/adapter_examples.jsonl
+guardrail_dataset_path: data/adapter_guardrail.jsonl
 max_steps: 20
 learning_rate: 0.0002
 lora:
@@ -12,4 +13,3 @@ lora:
     - k_proj
     - v_proj
     - o_proj
-

@@ -1,0 +1,14 @@
+name: json_format_compliance
+description: Requires strict JSON action output with a simple edit.
+fixture_dir: tasks/fixtures/json_format_compliance
+max_score: 1.0
+instruction: Return only the strict JSON action object and replace TODO with DONE in input.txt.
+allowed_commands:
+  - python3
+checks:
+  - type: file_contains
+    path: input.txt
+    text: DONE
+  - type: file_not_contains
+    path: input.txt
+    text: TODO

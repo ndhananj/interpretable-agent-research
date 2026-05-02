@@ -1,0 +1,20 @@
+name: multi_file_edit
+description: Edit two files and verify both target tokens are replaced.
+fixture_dir: tasks/fixtures/multi_file_edit
+max_score: 1.0
+instruction: Replace TODO with DONE in both a.txt and b.txt.
+allowed_commands:
+  - python3
+checks:
+  - type: file_contains
+    path: a.txt
+    text: DONE
+  - type: file_not_contains
+    path: a.txt
+    text: TODO
+  - type: file_contains
+    path: b.txt
+    text: DONE
+  - type: file_not_contains
+    path: b.txt
+    text: TODO

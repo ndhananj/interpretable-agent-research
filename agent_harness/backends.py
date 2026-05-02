@@ -4,7 +4,7 @@ import json
 import socket
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +14,8 @@ class AgentAction:
     decision_trace: str
     edits: dict[str, str]
     commands: list[list[str]]
+    raw_response: str | None = None
+    parsed_action: dict[str, Any] = field(default_factory=dict)
 
 
 class ModelBackend:
@@ -23,6 +25,17 @@ class ModelBackend:
 
 class BackendError(RuntimeError):
     """Raised when a model backend cannot produce a valid action."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_response: str | None = None,
+        extracted_response: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.raw_response = raw_response
+        self.extracted_response = extracted_response
 
 
 class MockBackend(ModelBackend):
@@ -164,26 +177,43 @@ class VLLMOpenAIBackend(ModelBackend):
 
 
 def _agent_action_from_json(content: str) -> AgentAction:
+    raw_content = content
     content = _extract_json_object(content)
     try:
         data = json.loads(content)
     except json.JSONDecodeError as exc:
         preview = _content_preview(content)
-        raise BackendError(f"Model response was not strict JSON. Response preview: {preview}") from exc
+        raise BackendError(
+            f"Model response was not strict JSON. Response preview: {preview}",
+            raw_response=raw_content,
+            extracted_response=content,
+        ) from exc
     if not isinstance(data, dict):
-        raise BackendError("Model response JSON must be an object")
+        raise BackendError("Model response JSON must be an object", raw_response=raw_content, extracted_response=content)
     decision_trace = data.get("decision_trace")
     edits = data.get("edits")
     commands = data.get("commands")
     if not isinstance(decision_trace, str) or not decision_trace.strip():
-        raise BackendError("Model response must include a non-empty string decision_trace")
+        raise BackendError(
+            "Model response must include a non-empty string decision_trace",
+            raw_response=raw_content,
+            extracted_response=content,
+        )
     if not isinstance(edits, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in edits.items()):
-        raise BackendError("Model response edits must be an object mapping paths to strings")
+        raise BackendError(
+            "Model response edits must be an object mapping paths to strings",
+            raw_response=raw_content,
+            extracted_response=content,
+        )
     if not isinstance(commands, list) or not all(
         isinstance(command, list) and all(isinstance(part, str) for part in command) for command in commands
     ):
-        raise BackendError("Model response commands must be a list of string argv arrays")
-    return AgentAction(decision_trace=decision_trace, edits=edits, commands=commands)
+        raise BackendError(
+            "Model response commands must be a list of string argv arrays",
+            raw_response=raw_content,
+            extracted_response=content,
+        )
+    return AgentAction(decision_trace=decision_trace, edits=edits, commands=commands, raw_response=raw_content, parsed_action=data)
 
 
 def _extract_json_object(content: str) -> str:

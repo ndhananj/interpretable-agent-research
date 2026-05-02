@@ -94,6 +94,8 @@ def test_vllm_response_becomes_agent_action(fake_server: str, tmp_path: Path) ->
     assert action.decision_trace == "edit the file"
     assert action.edits == {"input.txt": "DONE\n"}
     assert action.commands == [["python3", "-c", "print('ok')"]]
+    assert action.raw_response is not None
+    assert action.parsed_action["edits"] == {"input.txt": "DONE\n"}
 
 
 def test_vllm_retries_without_response_format_when_json_mode_fails(fake_server: str, tmp_path: Path) -> None:
@@ -188,6 +190,33 @@ def test_vllm_non_json_error_includes_response_preview(fake_server: str, tmp_pat
             backend.propose_actions("replace token", tmp_path)
     finally:
         _Handler.response_body = original
+
+
+def test_vllm_backend_error_preserves_malformed_raw_response(fake_server: str, tmp_path: Path) -> None:
+    original = _Handler.response_body
+    _Handler.response_body = {"choices": [{"message": {"content": '{"decision_trace":'}}]}
+    try:
+        backend = VLLMOpenAIBackend(base_url=fake_server, model_name="base", use_response_format=False)
+        with pytest.raises(BackendError) as exc_info:
+            backend.propose_actions("replace token", tmp_path)
+    finally:
+        _Handler.response_body = original
+
+    assert exc_info.value.raw_response == '{"decision_trace":'
+    assert exc_info.value.extracted_response == '{"decision_trace":'
+
+
+def test_vllm_backend_error_preserves_non_json_raw_response(fake_server: str, tmp_path: Path) -> None:
+    original = _Handler.response_body
+    _Handler.response_body = {"choices": [{"message": {"content": "I would edit input.txt."}}]}
+    try:
+        backend = VLLMOpenAIBackend(base_url=fake_server, model_name="base", use_response_format=False)
+        with pytest.raises(BackendError) as exc_info:
+            backend.propose_actions("replace token", tmp_path)
+    finally:
+        _Handler.response_body = original
+
+    assert exc_info.value.raw_response == "I would edit input.txt."
 
 
 def test_make_backend_creates_vllm_without_network_call() -> None:

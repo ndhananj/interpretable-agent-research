@@ -212,10 +212,12 @@ def run_task_pair(
         floor_ratio,
         base_score.functionality,
     )
+    base_payload = _score_payload(base_score, base_dir)
+    lora_payload = _score_payload(lora_score, lora_dir)
     return TaskComparison(
         task=task_path,
-        base=_score_payload(base_score, base_dir),
-        lora=_score_payload(lora_score, lora_dir),
+        base=base_payload,
+        lora=lora_payload,
     )
 
 
@@ -252,7 +254,11 @@ def build_summary(
     comparisons: list[TaskComparison],
     available_models: set[str],
 ) -> dict[str, Any]:
-    task_payloads = [asdict(item) for item in comparisons]
+    task_payloads = []
+    for item in comparisons:
+        payload = asdict(item)
+        payload["diagnostics"] = _comparison_diagnostics(payload["base"], payload["lora"])
+        task_payloads.append(payload)
     base_summary = _model_summary(base_model_id, run_dir / "base", [item.base for item in comparisons])
     lora_summary = _model_summary(lora_model_id, run_dir / "lora", [item.lora for item in comparisons])
     return {
@@ -260,6 +266,7 @@ def build_summary(
         "lora_model": asdict(lora_summary),
         "available_models": sorted(available_models),
         "tasks": task_payloads,
+        "warnings": _regression_warnings(task_payloads),
     }
 
 
@@ -282,13 +289,21 @@ def render_markdown_report(summary: dict[str, Any]) -> str:
             f"{model['explainability']:.3f} | {model['accepted_tasks']} | `{model['run_dir']}` |"
         )
     lines.extend(["", "## Per Task", ""])
-    lines.append("| Task | Base functionality | LoRA functionality | Base explainability | LoRA explainability | LoRA reason |")
-    lines.append("| --- | ---: | ---: | ---: | ---: | --- |")
+    lines.append("| Task | Base functionality | LoRA functionality | Check deltas | Raw JSON | Edit/command diff | Likely failure | LoRA reason |")
+    lines.append("| --- | ---: | ---: | --- | --- | --- | --- | --- |")
     for task in summary["tasks"]:
+        diagnostics = task.get("diagnostics", {})
         lines.append(
             f"| {task['task']} | {task['base']['functionality']:.3f} | {task['lora']['functionality']:.3f} | "
-            f"{task['base']['explainability']:.3f} | {task['lora']['explainability']:.3f} | {task['lora']['reason']} |"
+            f"{_markdown_join(diagnostics.get('check_deltas', []))} | "
+            f"{diagnostics.get('raw_response_validity', 'unknown')} | "
+            f"{_markdown_join(diagnostics.get('action_differences', []))} | "
+            f"{diagnostics.get('likely_failure_category', 'unknown')} | {task['lora']['reason']} |"
         )
+    if summary.get("warnings"):
+        lines.extend(["", "## Regression Warnings", ""])
+        for warning in summary["warnings"]:
+            lines.append(f"- {warning}")
     return "\n".join(lines) + "\n"
 
 
@@ -332,8 +347,111 @@ def _score_payload(score: ScoreResult, run_dir: Path) -> dict[str, Any]:
         "accepted": score.accepted,
         "reason": score.reason,
         "details": score.details,
+        "check_diagnostics": _read_json(run_dir / "check_diagnostics.json", []),
+        "file_snapshots": _read_json(run_dir / "final_file_snapshots.json", {}),
+        "raw_response_valid": _raw_response_valid(run_dir),
+        "parsed_action": _read_json(run_dir / "parsed_action.json", {}),
         "run_dir": str(run_dir),
     }
+
+
+def _read_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _raw_response_valid(run_dir: Path) -> bool | None:
+    if not (run_dir / "raw_response.txt").exists():
+        return None
+    return (run_dir / "parsed_action.json").exists()
+
+
+def _comparison_diagnostics(base: dict[str, Any], lora: dict[str, Any]) -> dict[str, Any]:
+    check_deltas = _check_deltas(base.get("check_diagnostics", []), lora.get("check_diagnostics", []))
+    action_differences = _action_differences(base.get("parsed_action", {}), lora.get("parsed_action", {}))
+    return {
+        "check_deltas": check_deltas,
+        "raw_response_validity": _raw_validity_label(base.get("raw_response_valid"), lora.get("raw_response_valid")),
+        "action_differences": action_differences,
+        "likely_failure_category": _likely_failure_category(base, lora, check_deltas, action_differences),
+    }
+
+
+def _check_deltas(base_checks: list[dict[str, Any]], lora_checks: list[dict[str, Any]]) -> list[str]:
+    base_by_key = {_check_key(check): check for check in base_checks}
+    lora_by_key = {_check_key(check): check for check in lora_checks}
+    deltas: list[str] = []
+    for key in sorted(set(base_by_key) | set(lora_by_key)):
+        base_passed = base_by_key.get(key, {}).get("passed")
+        lora_passed = lora_by_key.get(key, {}).get("passed")
+        if base_passed != lora_passed:
+            deltas.append(f"{key}: base={base_passed} lora={lora_passed}")
+    return deltas or ["no pass deltas"]
+
+
+def _check_key(check: dict[str, Any]) -> str:
+    return f"{check.get('type')} {check.get('path')} {check.get('expected_text')!r}"
+
+
+def _action_differences(base_action: dict[str, Any], lora_action: dict[str, Any]) -> list[str]:
+    differences: list[str] = []
+    if base_action.get("edits") != lora_action.get("edits"):
+        differences.append("edits differ")
+    if base_action.get("commands") != lora_action.get("commands"):
+        differences.append("commands differ")
+    if bool(base_action) != bool(lora_action):
+        differences.append("parsed action availability differs")
+    return differences or ["same edits and commands"]
+
+
+def _raw_validity_label(base_valid: bool | None, lora_valid: bool | None) -> str:
+    return f"base={_validity_value(base_valid)}, lora={_validity_value(lora_valid)}"
+
+
+def _validity_value(value: bool | None) -> str:
+    if value is None:
+        return "not captured"
+    return "valid" if value else "invalid"
+
+
+def _likely_failure_category(
+    base: dict[str, Any],
+    lora: dict[str, Any],
+    check_deltas: list[str],
+    action_differences: list[str],
+) -> str:
+    if lora.get("raw_response_valid") is False:
+        return "json_format"
+    if float(lora.get("functionality", 0.0)) < float(base.get("functionality", 0.0)):
+        if action_differences != ["same edits and commands"]:
+            return "action_regression"
+        if check_deltas != ["no pass deltas"]:
+            return "check_regression"
+        return "score_regression"
+    if float(lora.get("functionality", 0.0)) == 0.0:
+        return "task_failed"
+    return "none"
+
+
+def _regression_warnings(tasks: list[dict[str, Any]]) -> list[str]:
+    warnings: list[str] = []
+    for task in tasks:
+        base = task["base"]
+        lora = task["lora"]
+        if float(lora["functionality"]) < float(base["functionality"]):
+            warnings.append(
+                f"{task['task']}: LoRA functionality {lora['functionality']:.3f} regressed below "
+                f"base {base['functionality']:.3f}"
+            )
+        for delta in task.get("diagnostics", {}).get("check_deltas", []):
+            if "base=True lora=False" in delta:
+                warnings.append(f"{task['task']}: per-check regression {delta}")
+    return warnings
+
+
+def _markdown_join(items: list[str]) -> str:
+    return "<br>".join(str(item).replace("|", "\\|") for item in items)
 
 
 def _model_summary(model_id: str, run_dir: Path, scores: list[dict[str, Any]]) -> ModelSummary:

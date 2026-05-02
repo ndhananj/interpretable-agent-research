@@ -1,0 +1,13 @@
+name: edit_only
+description: Replace TODO with DONE without requiring a verification command.
+fixture_dir: tasks/fixtures/edit_only
+max_score: 1.0
+instruction: Replace TODO with DONE in input.txt. Do not change the other words.
+allowed_commands: []
+checks:
+  - type: file_contains
+    path: input.txt
+    text: DONE
+  - type: file_not_contains
+    path: input.txt
+    text: TODO

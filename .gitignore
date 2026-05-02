@@ -6,3 +6,5 @@ __pycache__/
 runs/
 adapters/
 data/*.jsonl
+!data/adapter_examples.jsonl
+!data/adapter_guardrail.jsonl

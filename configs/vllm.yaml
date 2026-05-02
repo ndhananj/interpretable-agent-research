@@ -34,3 +34,8 @@ scoring:
   metrics_config: configs/metrics.yaml
   task_paths:
     - tasks/replace_token.yaml
+    - tasks/edit_only.yaml
+    - tasks/command_only_verify.yaml
+    - tasks/preserve_unrelated_text.yaml
+    - tasks/multi_file_edit.yaml
+    - tasks/json_format_compliance.yaml

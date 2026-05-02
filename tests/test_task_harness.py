@@ -21,8 +21,16 @@ class _EditPathBackend(ModelBackend):
 def test_mock_task_runs(tmp_path: Path) -> None:
     result = run_task("tasks/replace_token.yaml", MockBackend(), tmp_path, timeout_s=10)
     assert result.functionality == 1.0
+    assert result.check_diagnostics[0]["type"] == "file_contains"
+    assert result.check_diagnostics[0]["path"] == "input.txt"
+    assert result.check_diagnostics[0]["expected_text"] == "DONE"
+    assert result.check_diagnostics[0]["passed"] is True
+    assert result.file_snapshots["input.txt"]["exists"] is True
+    assert result.file_snapshots["input.txt"]["sha256"]
     assert (tmp_path / "decision_trace.md").exists()
     assert (tmp_path / "tool_log.jsonl").exists()
+    assert (tmp_path / "check_diagnostics.json").exists()
+    assert (tmp_path / "final_file_snapshots.json").exists()
 
 
 def test_task_normalizes_model_edit_path_with_work_dir_prefix(
@@ -43,6 +51,14 @@ def test_task_normalizes_model_edit_path_with_work_dir_prefix(
     assert result.functionality == 1.0
     assert (run_dir / "work" / "input.txt").read_text(encoding="utf-8") == "DONE\n"
     assert '"path": "input.txt"' in (run_dir / "tool_log.jsonl").read_text(encoding="utf-8")
+
+
+def test_task_records_command_argv_and_return_code(tmp_path: Path) -> None:
+    result = run_task("tasks/replace_token.yaml", MockBackend(), tmp_path, timeout_s=10)
+
+    command_events = [event for event in result.events if event["type"] == "command"]
+    assert command_events[0]["argv"][0] == "python3"
+    assert command_events[0]["returncode"] == 0
 
 
 def test_task_accepts_absolute_edit_path_inside_work_dir(tmp_path: Path) -> None:
