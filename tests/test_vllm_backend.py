@@ -183,3 +183,14 @@ def test_vllm_config_accepts_completion_budget_below_context_window() -> None:
 
     assert config["max_model_len"] == 1024
     assert config["max_tokens"] == 512
+
+
+def test_vllm_config_can_disable_response_format() -> None:
+    config = validate_model_config(
+        {
+            "backend": "vllm_openai",
+            "use_response_format": False,
+        }
+    )
+
+    assert config["use_response_format"] is False

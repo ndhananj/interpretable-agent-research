@@ -131,7 +131,9 @@ class VLLMOpenAIBackend(ModelBackend):
                     raise BackendError(
                         "vLLM OpenAI server rejected /v1/chat/completions "
                         f"with HTTP {exc.code} {exc.reason}{detail}; retry without "
-                        f"response_format also failed: {fallback_exc}"
+                        "response_format also failed. A server-side HTTP 500 while "
+                        "using response_format can terminate vLLM before this client "
+                        f"fallback can recover: {fallback_exc}"
                     ) from exc
             detail = f": {error_body}" if error_body else ""
             raise BackendError(

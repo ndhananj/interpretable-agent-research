@@ -81,6 +81,14 @@ uv pip install 'transformers>=4.56.2,<5'
 python serve_vllm_adapter.py --config configs/vllm.yaml
 ```
 
+If the first harness request fails with HTTP 500 and the vLLM server log says
+`TokenizerInfo` has no attribute `from_huggingface`, the crash is in vLLM's
+xgrammar guided JSON decoding path for `response_format`, not in the LoRA
+adapter. Keep the prompt-level strict JSON instruction and parser validation,
+but disable the OpenAI `response_format` request field with
+`model.use_response_format: false` in `configs/vllm.yaml`, or repair the
+vLLM/xgrammar package stack so guided JSON decoding works.
+
 The current bad state observed on this machine is `torch 2.11.0+cu130` with
 CUDA 13 packages on a CUDA 12.2-era NVIDIA driver. Keeping the driver means
 reinstalling a driver-compatible vLLM/PyTorch wheel set. The other valid fix is
