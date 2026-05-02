@@ -96,6 +96,45 @@ python agent_harness/run_task.py \
   --run-dir runs/vllm-task
 ```
 
+### Compare base vs LoRA automatically
+
+Use the comparison helper to start the configured vLLM server, verify that both
+the base model and LoRA adapter are exposed by `/v1/models`, run the configured
+task suite against each model, and write side-by-side reports:
+
+```bash
+python compare_vllm_models.py --config configs/vllm.yaml --run-dir runs/model-compare
+```
+
+The helper uses `configs/vllm.yaml` as the source of truth. For the base-model
+run it removes `model.adapter_name` and `model.adapter_path` in memory, so the
+repository config is not changed. For the LoRA run it uses the config as-is and
+sends `model.adapter_name` as the OpenAI-compatible model id.
+
+If vLLM is already running, skip process startup and only run readiness/model
+checks plus evaluation:
+
+```bash
+python compare_vllm_models.py \
+  --config configs/vllm.yaml \
+  --run-dir runs/model-compare \
+  --skip-server-start
+```
+
+Outputs are written under the selected run directory:
+
+- `base/<task-name>/` and `lora/<task-name>/`: per-task traces, tool logs,
+  metrics, and score files.
+- `summary.json`: machine-readable aggregate and per-task functionality,
+  explainability, scoring details, acceptance reasons, and run directories.
+- `report.md`: compact base-vs-LoRA table for quick inspection.
+
+Functionality is the task check score. Explainability is currently behavioral:
+it scores the decision trace and tool log alignment, plus configured default
+mechanistic values unless a task run provides `mechanistic.json`. When
+mechanistic instrumentation is added, those `mechanistic.json` values will feed
+the same scoring path.
+
 ## Continuous agent with adapted vLLM model
 
 This path runs CSI against the LoRA adapter produced by `train_adapter.py`.
