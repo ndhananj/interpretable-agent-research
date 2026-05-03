@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Interpretability Dashboard</title>
+    <link rel="stylesheet" href="/dashboard.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Interpretability Dashboard</h1>
+        <p id="subtitle">Loading latest best run...</p>
+      </div>
+      <select id="runPicker" aria-label="Run"></select>
+    </header>
+    <main>
+      <section class="grid" id="overview"></section>
+      <section class="panel">
+        <h2>Score Breakdown</h2>
+        <div id="scoreBars" class="bars"></div>
+      </section>
+      <section class="panel">
+        <h2>Task Checks</h2>
+        <div class="tableWrap"><table id="checks"></table></div>
+      </section>
+      <section class="columns">
+        <article class="panel">
+          <h2>Decision Trace</h2>
+          <pre id="trace"></pre>
+        </article>
+        <article class="panel">
+          <h2>Parsed Action</h2>
+          <pre id="action"></pre>
+        </article>
+      </section>
+      <section class="panel">
+        <h2>Tool Log Timeline</h2>
+        <div id="toolLog" class="timeline"></div>
+      </section>
+      <section class="columns">
+        <article class="panel">
+          <h2>File Snapshots</h2>
+          <pre id="snapshots"></pre>
+        </article>
+        <article class="panel">
+          <h2>Mechanistic Evidence</h2>
+          <div id="mechanistic"></div>
+        </article>
+      </section>
+      <section class="columns">
+        <article class="panel">
+          <h2>Recommendations</h2>
+          <div id="recommendations"></div>
+        </article>
+        <article class="panel">
+          <h2>Adapter Metadata</h2>
+          <pre id="adapter"></pre>
+        </article>
+      </section>
+    </main>
+    <script src="/dashboard.js"></script>
+  </body>
+</html>
